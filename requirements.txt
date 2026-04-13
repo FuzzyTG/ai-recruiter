@@ -1,0 +1,11 @@
+# Dependencies
+slack-bolt>=1.18.0
+agentmail>=0.1.0
+fastapi>=0.110.0
+uvicorn>=0.29.0
+icalendar>=5.0.0
+pdfplumber>=0.10.0
+apscheduler>=3.10.0
+anthropic>=0.25.0
+httpx>=0.27.0
+python-dotenv>=1.0.0
