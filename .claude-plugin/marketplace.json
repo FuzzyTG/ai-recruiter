@@ -1,12 +1,16 @@
 {
-  "name": "fuzzytg",
-  "owner": { "name": "FuzzyTG" },
-  "plugins": [
+  "marketplaces": [
     {
-      "name": "ai-recruiter",
-      "source": ".",
-      "description": "Recruiting domain expertise — screening, scheduling, evaluating, deciding",
-      "version": "0.1.0"
+      "id": "fuzzytg",
+      "name": "FuzzyTG Plugins",
+      "description": "AI-powered recruiting tools",
+      "plugins": [
+        {
+          "name": "ai-recruiter",
+          "path": ".",
+          "description": "Recruiting domain expertise — screening, scheduling, evaluating, deciding"
+        }
+      ]
     }
   ]
 }
