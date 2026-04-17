@@ -75,6 +75,39 @@ afterEach(() => {
 
 // ── 1. Config CRUD ──────────────────────────────────────────────────────────
 
+describe('Credentials', () => {
+  it('round-trips a credential', () => {
+    store.writeCredential('agentmail_api_key', 'am_test123');
+    const creds = store.readCredentials();
+    expect(creds.agentmail_api_key).toBe('am_test123');
+  });
+
+  it('returns empty object when no credentials file exists', () => {
+    expect(store.readCredentials()).toEqual({});
+  });
+
+  it('returns empty object when credentials file is corrupted', () => {
+    const credPath = path.join(tmpDir, '.credentials');
+    fs.writeFileSync(credPath, 'not json!!!');
+    expect(store.readCredentials()).toEqual({});
+  });
+
+  it('sets file permissions to 0600', () => {
+    store.writeCredential('key', 'value');
+    const credPath = path.join(tmpDir, '.credentials');
+    const stat = fs.statSync(credPath);
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it('preserves existing credentials when adding new ones', () => {
+    store.writeCredential('key1', 'val1');
+    store.writeCredential('key2', 'val2');
+    const creds = store.readCredentials();
+    expect(creds.key1).toBe('val1');
+    expect(creds.key2).toBe('val2');
+  });
+});
+
 describe('Config CRUD', () => {
   it('should throw SetupRequiredError when reading before write', () => {
     expect(() => store.readConfig()).toThrow(SetupRequiredError);

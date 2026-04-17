@@ -88,6 +88,28 @@ export class RecruiterStore {
     fs.appendFileSync(auditPath, JSON.stringify(entry) + '\n', 'utf-8');
   }
 
+  // ── Credentials Operations ────────────────────────────────────────────────
+
+  private get credentialsPath(): string {
+    return path.join(this.baseDir, '.credentials');
+  }
+
+  readCredentials(): Record<string, string> {
+    if (!fs.existsSync(this.credentialsPath)) return {};
+    try {
+      return JSON.parse(fs.readFileSync(this.credentialsPath, 'utf-8'));
+    } catch {
+      return {};
+    }
+  }
+
+  writeCredential(key: string, value: string): void {
+    const creds = this.readCredentials();
+    creds[key] = value;
+    this._safeWrite(this.credentialsPath, creds);
+    fs.chmodSync(this.credentialsPath, 0o600);
+  }
+
   // ── Config Operations ────────────────────────────────────────────────────
 
   configExists(): boolean {

@@ -205,7 +205,37 @@ function generateFollowupBody(
 // ---------------------------------------------------------------------------
 
 export function createHandlers(deps: ServerDeps) {
-  const { store, emailClient, apiKey } = deps;
+  const { store } = deps;
+  let _emailClient: RecruiterMailClient | undefined = deps.emailClient;
+  let _apiKey: string | undefined = deps.apiKey;
+
+  function resolveApiKey(): string | undefined {
+    if (_apiKey) return _apiKey;
+    // Check env
+    const envKey = process.env.AGENTMAIL_API_KEY;
+    if (envKey) { _apiKey = envKey; return envKey; }
+    // Check credentials file
+    const creds = store.readCredentials();
+    if (creds.agentmail_api_key) { _apiKey = creds.agentmail_api_key; return _apiKey; }
+    return undefined;
+  }
+
+  function getEmailClient(): RecruiterMailClient | undefined {
+    if (_emailClient) return _emailClient;
+    const key = resolveApiKey();
+    if (!key) return undefined;
+    let inboxId: string | undefined;
+    if (store.configExists()) {
+      const config = store.readConfig();
+      if (config.agentmail_inbox_id) inboxId = config.agentmail_inbox_id;
+    }
+    _emailClient = new RecruiterMailClient({ apiKey: key, inboxId });
+    return _emailClient;
+  }
+
+  // Aliases for backward compat within handlers
+  function getApiKey(): string | undefined { return resolveApiKey(); }
+
 
   function computeSlotsHash(offeredSlots: OfferedSlot[]): string {
     if (!offeredSlots || offeredSlots.length === 0) return 'no_slots';
@@ -236,6 +266,7 @@ export function createHandlers(deps: ServerDeps) {
     }>;
     jd?: string;
     confirm?: boolean;
+    agentmail_api_key?: string;
   }): Promise<ToolResult> {
     try {
       let config_created = false;
@@ -243,6 +274,13 @@ export function createHandlers(deps: ServerDeps) {
       let framework_created = false;
       let framework_confirmed = false;
       let inbox_email: string | undefined;
+
+      // Store API key if provided (triggers lazy re-init of email client)
+      if (args.agentmail_api_key) {
+        store.writeCredential('agentmail_api_key', args.agentmail_api_key);
+        _apiKey = args.agentmail_api_key;
+        _emailClient = undefined; // force re-init on next getEmailClient()
+      }
 
       // Step 1: Config creation
       if (!store.configExists()) {
@@ -262,8 +300,8 @@ export function createHandlers(deps: ServerDeps) {
 
         let agentmail_inbox_id = '';
         const senderName = args.sender_name ?? 'AI Assistant';
-        if (apiKey && emailClient) {
-          const inbox = await emailClient.createInbox(
+        if (getApiKey() && getEmailClient()) {
+          const inbox = await getEmailClient()!.createInbox(
             senderName,
             slugify(args.hm_name!),
             args.inbox_username,
@@ -302,9 +340,9 @@ export function createHandlers(deps: ServerDeps) {
           store.writeConfig(existing);
 
           // If sender_name changed, update the existing AgentMail inbox display name
-          if (args.sender_name !== undefined && existing.agentmail_inbox_id && emailClient) {
+          if (args.sender_name !== undefined && existing.agentmail_inbox_id && getEmailClient()) {
             try {
-              await emailClient.updateInbox(existing.agentmail_inbox_id, {
+              await getEmailClient()!.updateInbox(existing.agentmail_inbox_id, {
                 displayName: args.sender_name,
               });
             } catch {
@@ -634,8 +672,8 @@ export function createHandlers(deps: ServerDeps) {
         const fullBody = appendSignature(stripTrailingSignature(args.email_body!), config);
         let messageId: string | undefined;
         let threadId: string | undefined;
-        if (emailClient) {
-          const emailResult = await emailClient.sendEmail({
+        if (getEmailClient()) {
+          const emailResult = await getEmailClient()!.sendEmail({
             to: candidate.channels.email,
             subject: args.email_subject ?? `Interview Scheduling: ${args.role}`,
             text: fullBody,
@@ -683,7 +721,7 @@ export function createHandlers(deps: ServerDeps) {
             start: s.start.toISOString(),
             end: s.end.toISOString(),
           })),
-          email_sent: !!emailClient,
+          email_sent: !!getEmailClient(),
           message_id: messageId,
         });
       } else if (args.action === 'confirm') {
@@ -731,9 +769,9 @@ export function createHandlers(deps: ServerDeps) {
         // CRITICAL: Send confirmation email BEFORE state transition (Hard Rule 4)
         const confirmBody = appendSignature(stripTrailingSignature(args.email_body!), config);
         let messageId: string | undefined;
-        if (emailClient) {
+        if (getEmailClient()) {
           const attachment = RecruiterMailClient.makeIcsAttachment(ics);
-          const emailResult = await emailClient.sendEmail({
+          const emailResult = await getEmailClient()!.sendEmail({
             to: candidate.channels.email,
             subject: args.email_subject ?? `Interview Confirmed: ${args.role}`,
             text: confirmBody,
@@ -779,7 +817,7 @@ export function createHandlers(deps: ServerDeps) {
 
         return success({
           confirmed_slot: args.confirmed_slot,
-          email_sent: !!emailClient,
+          email_sent: !!getEmailClient(),
           message_id: messageId,
         });
       } else if (args.action === 'cancel') {
@@ -850,7 +888,7 @@ export function createHandlers(deps: ServerDeps) {
         let messageId: string | undefined;
         let cancelIcsSent = false;
 
-        if (emailClient) {
+        if (getEmailClient()) {
           const attachments: Array<{ filename: string; content: string; contentType: string }> = [];
 
           // If interview was confirmed, generate ICS CANCEL
@@ -881,7 +919,7 @@ export function createHandlers(deps: ServerDeps) {
           }
 
           // Send cancel email (fresh message to candidate)
-          const emailResult = await emailClient.sendEmail({
+          const emailResult = await getEmailClient()!.sendEmail({
             to: candidate.channels.email,
             subject: args.email_subject ?? `Interview Cancelled: ${args.role}`,
             text: cancelBody,
@@ -926,7 +964,7 @@ export function createHandlers(deps: ServerDeps) {
           cancelled: true,
           target_state: targetStateStr,
           ics_cancel_sent: cancelIcsSent,
-          email_sent: !!emailClient,
+          email_sent: !!getEmailClient(),
           message_id: messageId,
         });
       } else if (args.action === 'send_homework') {
@@ -990,8 +1028,8 @@ export function createHandlers(deps: ServerDeps) {
         // 7. CRITICAL: Send email BEFORE state transition (Hard Rule 4)
         const homeworkBody = appendSignature(stripTrailingSignature(args.email_body), config);
         let messageId: string | undefined;
-        if (emailClient) {
-          const emailResult = await emailClient.sendEmail({
+        if (getEmailClient()) {
+          const emailResult = await getEmailClient()!.sendEmail({
             to: candidate.channels.email,
             subject: args.email_subject ?? `Homework Assignment: ${args.role}`,
             text: homeworkBody,
@@ -1031,7 +1069,7 @@ export function createHandlers(deps: ServerDeps) {
         return success({
           homework_sent: true,
           homework_deadline: args.homework_deadline,
-          email_sent: !!emailClient,
+          email_sent: !!getEmailClient(),
           message_id: messageId,
         });
       } else if (args.action === 'mark_no_show') {
@@ -1288,8 +1326,8 @@ export function createHandlers(deps: ServerDeps) {
       // CRITICAL: Send email BEFORE state transition
       const decideBody = appendSignature(stripTrailingSignature(args.email_body), config);
       let messageId: string | undefined;
-      if (emailClient) {
-        const emailResult = await emailClient.sendEmail({
+      if (getEmailClient()) {
+        const emailResult = await getEmailClient()!.sendEmail({
           to: candidate.channels.email,
           subject: args.email_subject,
           text: decideBody,
@@ -1330,7 +1368,7 @@ export function createHandlers(deps: ServerDeps) {
         candidate_id: args.candidate_id,
         decision: args.decision,
         state: targetState,
-        email_sent: !!emailClient,
+        email_sent: !!getEmailClient(),
         message_id: messageId,
       });
     } catch (e) {
@@ -1427,7 +1465,7 @@ export function createHandlers(deps: ServerDeps) {
 
         case 'inbox': {
           // Guard: require emailClient
-          if (!emailClient) {
+          if (!getEmailClient()) {
             return failure(
               'email_error',
               'Email client not configured. Set AGENTMAIL_API_KEY and run setup first.',
@@ -1472,7 +1510,7 @@ export function createHandlers(deps: ServerDeps) {
           const PAGE_SIZE = 50;
 
           for (let page = 0; page < MAX_PAGES; page++) {
-            const result = await emailClient.listMessages({
+            const result = await getEmailClient()!.listMessages({
               limit: PAGE_SIZE,
               after: cursor,
             });
@@ -1571,7 +1609,7 @@ export function createHandlers(deps: ServerDeps) {
     config: Config,
   ): Promise<TimeoutExecutionResult> {
     // No email client → skip
-    if (!emailClient) {
+    if (!getEmailClient()) {
       return {
         candidate_id: candidate.candidate_id,
         role,
@@ -1610,7 +1648,7 @@ export function createHandlers(deps: ServerDeps) {
     const fullBody = appendSignature(body, config);
     const subject = `Follow-up: ${config.company_name} Interview`;
 
-    const emailResult = await emailClient.sendEmail({
+    const emailResult = await getEmailClient()!.sendEmail({
       to: candidate.channels.email,
       subject,
       text: fullBody,
@@ -1862,17 +1900,7 @@ function handleError(e: unknown): ToolResult {
 export function createServer(deps?: Partial<ServerDeps>): McpServer {
   const store = deps?.store ?? new RecruiterStore(process.env.RECRUITER_HOME);
   const apiKey = deps?.apiKey ?? process.env.AGENTMAIL_API_KEY;
-
-  let inboxId: string | undefined;
-  if (store.configExists()) {
-    const config = store.readConfig();
-    if (config.agentmail_inbox_id) {
-      inboxId = config.agentmail_inbox_id;
-    }
-  }
-
-  const emailClient =
-    deps?.emailClient ?? (apiKey ? new RecruiterMailClient({ apiKey, inboxId }) : undefined);
+  const emailClient = deps?.emailClient;
 
   const handlers = createHandlers({ store, emailClient, apiKey });
   const server = new McpServer({ name: 'ai-recruiter', version: '0.1.0' });
@@ -1904,6 +1932,7 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
         .optional(),
       jd: z.string().optional(),
       confirm: z.boolean().optional(),
+      agentmail_api_key: z.string().optional(),
     },
     { destructiveHint: false, idempotentHint: true },
     async (args) => handlers.recruitSetup(args),
