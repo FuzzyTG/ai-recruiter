@@ -1,16 +1,16 @@
 {
-  "marketplaces": [
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "fuzzytg",
+  "description": "AI-powered recruiting tools",
+  "owner": {
+    "name": "FuzzyTG"
+  },
+  "plugins": [
     {
-      "id": "fuzzytg",
-      "name": "FuzzyTG Plugins",
-      "description": "AI-powered recruiting tools",
-      "plugins": [
-        {
-          "name": "ai-recruiter",
-          "path": ".",
-          "description": "Recruiting domain expertise — screening, scheduling, evaluating, deciding"
-        }
-      ]
+      "name": "ai-recruiter",
+      "description": "Recruiting domain expertise — screening, scheduling, evaluating, deciding",
+      "version": "0.1.0",
+      "source": "./"
     }
   ]
 }
