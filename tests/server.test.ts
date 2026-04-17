@@ -1169,7 +1169,7 @@ describe('recruit_status (inbox)', () => {
 
   it('returns error when no emailClient', async () => {
     // Create handlers WITHOUT emailClient
-    const handlersNoEmail = createHandlers({ store, apiKey: 'test-key' });
+    const handlersNoEmail = createHandlers({ store });
 
     const result = await handlersNoEmail.recruitStatus({
       query_type: 'inbox',
@@ -2703,7 +2703,7 @@ describe('executeTimeouts — auto_followup', () => {
   });
 
   it('skips follow-up when no email client configured', async () => {
-    const noEmailHandlers = createHandlers({ store, apiKey: 'test-key' });
+    const noEmailHandlers = createHandlers({ store });
     await setupRole(store);
     const now = Date.now();
     const candidate = makeCandidate({

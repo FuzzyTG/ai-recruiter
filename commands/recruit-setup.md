@@ -19,6 +19,10 @@ description: Set up recruiting config, evaluation framework, and job description
 
 ## Protocol
 
+### Step 0: AgentMail API Key (first-time only)
+
+**[LLM]** Check if email is already configured by calling `recruit_status({ query_type: "overview" })`. If the config exists and has a non-empty `agentmail_inbox_id`, email is already set up — skip to Step 1. Otherwise, ask HM for their AgentMail API key (get one at https://agentmail.to). Pass it as `agentmail_api_key` in the `recruit_setup` call in Step 2. Do not store it yourself — the tool handles credential storage.
+
 ### Step 1: Collect Config (first-time only)
 
 **[LLM]** Ask HM for:
