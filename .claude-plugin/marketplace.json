@@ -1,0 +1,12 @@
+{
+  "name": "fuzzytg",
+  "owner": { "name": "FuzzyTG" },
+  "plugins": [
+    {
+      "name": "ai-recruiter",
+      "source": ".",
+      "description": "Recruiting domain expertise — screening, scheduling, evaluating, deciding",
+      "version": "0.1.0"
+    }
+  ]
+}

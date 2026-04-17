@@ -1,0 +1,27 @@
+{
+  "name": "ai-recruiter",
+  "version": "0.1.0",
+  "description": "Recruiting domain expertise for AI agents — turns your assistant into a recruiting coordinator",
+  "author": { "name": "FuzzyTG" },
+  "repository": "https://github.com/FuzzyTG/ai-recruiter",
+  "license": "MIT",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": {
+    "ai-recruiter": {
+      "command": "npx",
+      "args": ["tsx", "${CLAUDE_PLUGIN_ROOT}/src/server.ts"],
+      "cwd": "${CLAUDE_PLUGIN_DATA}",
+      "env": {
+        "AGENTMAIL_API_KEY": "${user_config.agentmail_api_key}",
+        "NODE_PATH": "${CLAUDE_PLUGIN_DATA}/node_modules"
+      }
+    }
+  },
+  "userConfig": {
+    "agentmail_api_key": {
+      "description": "AgentMail API key for email channel (get one at https://agentmail.to)",
+      "sensitive": true
+    }
+  }
+}
