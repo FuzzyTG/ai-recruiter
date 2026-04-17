@@ -20,7 +20,9 @@
   },
   "userConfig": {
     "agentmail_api_key": {
+      "title": "AgentMail API Key",
       "description": "AgentMail API key for email channel (get one at https://agentmail.to)",
+      "type": "string",
       "sensitive": true
     }
   }
