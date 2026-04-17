@@ -9,10 +9,7 @@
     "ai-recruiter": {
       "command": "npx",
       "args": ["tsx", "${CLAUDE_PLUGIN_ROOT}/src/server.ts"],
-      "cwd": "${CLAUDE_PLUGIN_DATA}",
-      "env": {
-        "NODE_PATH": "${CLAUDE_PLUGIN_DATA}/node_modules"
-      }
+      "cwd": "${CLAUDE_PLUGIN_ROOT}"
     }
   }
 }
