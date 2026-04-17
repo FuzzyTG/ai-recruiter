@@ -11,17 +11,8 @@
       "args": ["tsx", "${CLAUDE_PLUGIN_ROOT}/src/server.ts"],
       "cwd": "${CLAUDE_PLUGIN_DATA}",
       "env": {
-        "AGENTMAIL_API_KEY": "${user_config.agentmail_api_key}",
         "NODE_PATH": "${CLAUDE_PLUGIN_DATA}/node_modules"
       }
-    }
-  },
-  "userConfig": {
-    "agentmail_api_key": {
-      "title": "AgentMail API Key",
-      "description": "AgentMail API key for email channel (get one at https://agentmail.to)",
-      "type": "string",
-      "sensitive": true
     }
   }
 }
