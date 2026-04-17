@@ -171,17 +171,14 @@ The tools communicate with candidates through a channel abstraction. Email (via 
 # Add the marketplace
 /plugin marketplace add FuzzyTG/ai-recruiter
 
-# Install the plugin
+# Install the plugin — you'll be prompted for your AgentMail API key during install
 /plugin install ai-recruiter@fuzzytg
-
-# Configure your AgentMail API key
-/plugin config ai-recruiter agentmail_api_key your_key_here
 
 # Start using
 /recruit-setup
 ```
 
-Dependencies install automatically on first session. No manual `npm install` needed.
+You'll need an [AgentMail](https://agentmail.to) API key. The plugin prompts for it during installation. Dependencies install automatically on first session — no manual `npm install` needed.
 
 ### Option 2: Manual MCP Server
 
