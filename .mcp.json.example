@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ai-recruiter": {
+      "command": "npx",
+      "args": ["tsx", "src/server.ts"],
+      "env": {
+        "AGENTMAIL_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
