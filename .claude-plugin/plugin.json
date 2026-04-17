@@ -5,6 +5,7 @@
   "author": { "name": "FuzzyTG" },
   "repository": "https://github.com/FuzzyTG/ai-recruiter",
   "license": "MIT",
+  "hooks": "./hooks/hooks.json",
   "mcpServers": {
     "ai-recruiter": {
       "command": "npx",

@@ -13,15 +13,15 @@ description: Set up recruiting config, evaluation framework, and job description
 
 **[MCP]** Call `recruit_status({ query_type: "overview" })`.
 
-- If `setup_required` error → this is a fresh install. Proceed to Step 1.
-- If success → config exists. Skip to Step 3 (framework creation).
-- If role already has a confirmed framework → inform HM. They can create a new role or skip.
+- If `setup_required` error → this is a fresh install. Proceed to Step 0.
+- If success → config exists. Proceed to Step 0 to verify the API key is available, then skip to Step 3 (framework creation).
+- If role already has a confirmed framework → inform HM. They can create a new role or skip. Still check Step 0 for API key.
 
 ## Protocol
 
-### Step 0: AgentMail API Key (first-time only)
+### Step 0: AgentMail API Key Check
 
-**[LLM]** Call `recruit_status({ query_type: "overview" })`. Check two things: (1) whether `agentmail_inbox_id` exists in the config, and (2) whether the response indicates the API key is available (look for `agentmail_key_configured: true`). If the inbox exists **and** the key is configured, email is fully set up — skip to Step 1. If the inbox exists but the key is missing, tell HM: "Your inbox is set up but the API key is no longer available. Please provide it again." Ask for the key and pass it as `agentmail_api_key` in the `recruit_setup` call in Step 2. If neither exists, this is a fresh install — ask HM for their AgentMail API key (get one at https://agentmail.to) and pass it as `agentmail_api_key` in Step 2. Do not store it yourself — the tool handles credential storage.
+**[LLM]** Call `recruit_status({ query_type: "overview" })`. Check two things: (1) whether `agentmail_inbox_id` exists in the config, and (2) whether the response indicates the API key is available (look for `agentmail_key_configured: true`). If the inbox exists **and** the key is configured, email is fully set up — proceed according to Dependency Guard routing (Step 1 for fresh installs, Step 3 for existing configs). If the inbox exists but the key is missing, tell HM: "Your inbox is set up but the API key is no longer available. Please provide it again." Ask for the key and pass it as `agentmail_api_key` in the `recruit_setup` call in Step 2. If neither exists, this is a fresh install — ask HM for their AgentMail API key (get one at https://agentmail.to) and pass it as `agentmail_api_key` in Step 2. Do not store it yourself — the tool handles credential storage.
 
 ### Step 1: Collect Config (first-time only)
 
