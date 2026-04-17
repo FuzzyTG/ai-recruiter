@@ -1408,7 +1408,7 @@ export function createHandlers(deps: ServerDeps) {
             overview[role] = grouped;
           }
 
-          return success({ overview });
+          return success({ overview, agentmail_key_configured: !!getApiKey() });
         }
 
         case 'candidate': {
