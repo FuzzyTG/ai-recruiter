@@ -1,6 +1,6 @@
 {
   "name": "ai-recruiter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Recruiting domain expertise for AI agents — turns your assistant into a recruiting coordinator",
   "author": { "name": "FuzzyTG" },
   "repository": "https://github.com/FuzzyTG/ai-recruiter",
