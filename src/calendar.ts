@@ -43,6 +43,9 @@ export interface GenerateIcsOptions {
   attendeeEmail: string;
   attendeeName?: string;
   uid?: string;
+  timezone: string;
+  hmEmail?: string;
+  hmName?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +79,51 @@ function toIcsUtc(d: Date): string {
     pad(d.getUTCMinutes()) +
     pad(d.getUTCSeconds()) +
     'Z'
+  );
+}
+
+/** Compute UTC offset string (+HHMM / -HHMM) for a timezone at a given instant. */
+function utcOffsetString(tz: string, at: Date = new Date()): string {
+  const utcFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', hour: 'numeric', minute: 'numeric', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const localFmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: 'numeric', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const toMin = (fmt: Intl.DateTimeFormat) => {
+    const p = fmt.formatToParts(at);
+    const get = (t: string) => parseInt(p.find((x) => x.type === t)!.value, 10);
+    const y = get('year'), m = get('month'), d = get('day');
+    let h = get('hour'); if (h === 24) h = 0;
+    return ((y * 365 + m * 30 + d) * 24 + h) * 60 + get('minute');
+  };
+  const diffMin = toMin(localFmt) - toMin(utcFmt);
+  const sign = diffMin >= 0 ? '+' : '-';
+  const abs = Math.abs(diffMin);
+  const hh = Math.floor(abs / 60).toString().padStart(2, '0');
+  const mm = (abs % 60).toString().padStart(2, '0');
+  return `${sign}${hh}${mm}`;
+}
+
+/** Format Date as local time in a given timezone WITHOUT the Z suffix: 20260428T110000 */
+function toIcsLocal(d: Date, tz: string): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)!.value;
+  return (
+    get('year') +
+    get('month') +
+    get('day') +
+    'T' +
+    pad(parseInt(get('hour'), 10) === 24 ? 0 : parseInt(get('hour'), 10)) +
+    get('minute') +
+    get('second')
   );
 }
 
@@ -370,6 +418,9 @@ export function generateIcs(options: GenerateIcsOptions): string {
     attendeeEmail,
     attendeeName,
     uid = `${crypto.randomUUID()}@ai-recruiter`,
+    timezone,
+    hmEmail,
+    hmName,
   } = options;
 
   if (start >= end) {
@@ -382,12 +433,25 @@ export function generateIcs(options: GenerateIcsOptions): string {
   lines.push(icsLine('VERSION:2.0'));
   lines.push(icsLine('PRODID:-//AI Recruiter//AI Recruiter//EN'));
   lines.push(icsLine('CALSCALE:GREGORIAN'));
-  lines.push(icsLine('METHOD:PUBLISH'));
+  lines.push(icsLine('METHOD:REQUEST'));
+
+  // Minimal VTIMEZONE block
+  const tzOffset = utcOffsetString(timezone, start);
+  lines.push(icsLine('BEGIN:VTIMEZONE'));
+  lines.push(icsLine(`TZID:${timezone}`));
+  lines.push(icsLine('BEGIN:STANDARD'));
+  lines.push(icsLine(`DTSTART:19700101T000000`));
+  lines.push(icsLine(`TZNAME:${timezone}`));
+  lines.push(icsLine(`TZOFFSETFROM:${tzOffset}`));
+  lines.push(icsLine(`TZOFFSETTO:${tzOffset}`));
+  lines.push(icsLine('END:STANDARD'));
+  lines.push(icsLine('END:VTIMEZONE'));
+
   lines.push(icsLine('BEGIN:VEVENT'));
   lines.push(icsLine(`UID:${uid}`));
   lines.push(icsLine(`DTSTAMP:${toIcsUtc(new Date())}`));
-  lines.push(icsLine(`DTSTART:${toIcsUtc(start)}`));
-  lines.push(icsLine(`DTEND:${toIcsUtc(end)}`));
+  lines.push(icsLine(`DTSTART;TZID=${timezone}:${toIcsLocal(start, timezone)}`));
+  lines.push(icsLine(`DTEND;TZID=${timezone}:${toIcsLocal(end, timezone)}`));
   lines.push(icsLine(`SUMMARY:${summary}`));
   lines.push(icsLine(`DESCRIPTION:${description}`));
   lines.push(icsLine(`LOCATION:${location}`));
@@ -401,6 +465,15 @@ export function generateIcs(options: GenerateIcsOptions): string {
       `ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION${attCn}:mailto:${attendeeEmail}`,
     ),
   );
+
+  if (hmEmail) {
+    const hmCn = hmName ? `;CN=${hmName}` : '';
+    lines.push(
+      icsLine(
+        `ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION${hmCn}:mailto:${hmEmail}`,
+      ),
+    );
+  }
 
   lines.push(icsLine('STATUS:CONFIRMED'));
   lines.push(icsLine('END:VEVENT'));
@@ -444,6 +517,9 @@ export interface GenerateCancelIcsOptions {
   organizerName?: string;
   attendeeEmail: string;
   attendeeName?: string;
+  timezone: string;
+  hmEmail?: string;
+  hmName?: string;
 }
 
 export function generateCancelIcs(options: GenerateCancelIcsOptions): string {
@@ -456,6 +532,9 @@ export function generateCancelIcs(options: GenerateCancelIcsOptions): string {
     organizerName,
     attendeeEmail,
     attendeeName,
+    timezone,
+    hmEmail,
+    hmName,
   } = options;
 
   const lines: string[] = [];
@@ -465,11 +544,24 @@ export function generateCancelIcs(options: GenerateCancelIcsOptions): string {
   lines.push(icsLine('PRODID:-//AI Recruiter//AI Recruiter//EN'));
   lines.push(icsLine('CALSCALE:GREGORIAN'));
   lines.push(icsLine('METHOD:CANCEL'));
+
+  // Minimal VTIMEZONE block
+  const tzOffset = utcOffsetString(timezone, start);
+  lines.push(icsLine('BEGIN:VTIMEZONE'));
+  lines.push(icsLine(`TZID:${timezone}`));
+  lines.push(icsLine('BEGIN:STANDARD'));
+  lines.push(icsLine(`DTSTART:19700101T000000`));
+  lines.push(icsLine(`TZNAME:${timezone}`));
+  lines.push(icsLine(`TZOFFSETFROM:${tzOffset}`));
+  lines.push(icsLine(`TZOFFSETTO:${tzOffset}`));
+  lines.push(icsLine('END:STANDARD'));
+  lines.push(icsLine('END:VTIMEZONE'));
+
   lines.push(icsLine('BEGIN:VEVENT'));
   lines.push(icsLine(`UID:${uid}`));
   lines.push(icsLine(`DTSTAMP:${toIcsUtc(new Date())}`));
-  lines.push(icsLine(`DTSTART:${toIcsUtc(start)}`));
-  lines.push(icsLine(`DTEND:${toIcsUtc(end)}`));
+  lines.push(icsLine(`DTSTART;TZID=${timezone}:${toIcsLocal(start, timezone)}`));
+  lines.push(icsLine(`DTEND;TZID=${timezone}:${toIcsLocal(end, timezone)}`));
   lines.push(icsLine(`SUMMARY:${summary}`));
   lines.push(icsLine(`SEQUENCE:1`));
 
@@ -482,6 +574,15 @@ export function generateCancelIcs(options: GenerateCancelIcsOptions): string {
       `ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION${attCn}:mailto:${attendeeEmail}`,
     ),
   );
+
+  if (hmEmail) {
+    const hmCn = hmName ? `;CN=${hmName}` : '';
+    lines.push(
+      icsLine(
+        `ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION${hmCn}:mailto:${hmEmail}`,
+      ),
+    );
+  }
 
   lines.push(icsLine('STATUS:CANCELLED'));
   lines.push(icsLine('END:VEVENT'));

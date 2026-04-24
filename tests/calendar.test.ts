@@ -223,6 +223,7 @@ describe('generateIcs', () => {
     organizerName: 'Recruiter',
     attendeeEmail: 'alice@example.com',
     attendeeName: 'Alice',
+    timezone: 'UTC',
   };
 
   it('should contain all required ICS fields', () => {
@@ -234,8 +235,8 @@ describe('generateIcs', () => {
     expect(ics).toContain('END:VEVENT');
     expect(ics).toContain('VERSION:2.0');
     expect(ics).toContain('PRODID:');
-    expect(ics).toContain('DTSTART:');
-    expect(ics).toContain('DTEND:');
+    expect(ics).toContain('DTSTART');
+    expect(ics).toContain('DTEND');
     expect(ics).toContain('UID:');
     expect(ics).toContain('DTSTAMP:');
     expect(ics).toContain('SUMMARY:');
@@ -248,8 +249,8 @@ describe('generateIcs', () => {
   it('should have DTSTART before DTEND', () => {
     const ics = generateIcs(baseOpts);
 
-    const dtstart = ics.match(/DTSTART:(\S+)/)?.[1];
-    const dtend = ics.match(/DTEND:(\S+)/)?.[1];
+    const dtstart = ics.match(/DTSTART[^:]*:(\S+)/)?.[1];
+    const dtend = ics.match(/DTEND[^:]*:(\S+)/)?.[1];
 
     expect(dtstart).toBeDefined();
     expect(dtend).toBeDefined();
@@ -262,9 +263,9 @@ describe('generateIcs', () => {
     expect(uid).toMatch(/@ai-recruiter$/);
   });
 
-  it('should include METHOD:PUBLISH', () => {
+  it('should include METHOD:REQUEST', () => {
     const ics = generateIcs(baseOpts);
-    expect(ics).toContain('METHOD:PUBLISH');
+    expect(ics).toContain('METHOD:REQUEST');
   });
 
   it('should contain attendee and organizer emails', () => {
@@ -277,13 +278,10 @@ describe('generateIcs', () => {
     expect(unfolded).toContain('ATTENDEE');
   });
 
-  it('should use UTC dates (Z suffix)', () => {
+  it('should use TZID-qualified dates', () => {
     const ics = generateIcs(baseOpts);
-    const dtstart = ics.match(/DTSTART:(\S+)/)?.[1];
-    const dtend = ics.match(/DTEND:(\S+)/)?.[1];
-
-    expect(dtstart).toMatch(/Z$/);
-    expect(dtend).toMatch(/Z$/);
+    expect(ics).toContain('DTSTART;TZID=UTC:');
+    expect(ics).toContain('DTEND;TZID=UTC:');
   });
 
   it('should throw when DTSTART >= DTEND', () => {
@@ -338,6 +336,7 @@ describe('generateCancelIcs', () => {
     organizerName: 'Test HM',
     attendeeEmail: 'candidate@test.com',
     attendeeName: 'Test Candidate',
+    timezone: 'UTC',
   };
 
   it('produces valid ICS with METHOD:CANCEL', () => {
