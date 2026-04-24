@@ -14,6 +14,7 @@ import {
   isValidTransition,
   isApprovalRequired,
   getTimeoutRules,
+  slugify,
 } from './models.js';
 
 // ── Error Types ──────────────────────────────────────────────────────────────
@@ -58,6 +59,20 @@ export class ValidationError extends Error {
     super(msg);
     this.name = 'ValidationError';
   }
+}
+
+// ── Role Resolution Types ────────────────────────────────────────────────────
+
+export type RoleResolution =
+  | { status: 'exact'; canonical: string; display: string }
+  | { status: 'normalized'; canonical: string; display: string; input: string }
+  | { status: 'ambiguous'; input: string; candidates: Array<{ canonical: string; display: string }> }
+  | { status: 'not_found'; input: string; available: Array<{ canonical: string; display: string }> };
+
+export interface MigrationResult {
+  renamed: Array<{ from: string; to: string; display: string }>;
+  skipped_collisions: Array<{ source: string; target: string; reason: string }>;
+  display_backfills: Array<{ canonical: string; display: string }>;
 }
 
 // ── RecruiterStore ───────────────────────────────────────────────────────────
@@ -143,12 +158,20 @@ export class RecruiterStore {
     if (!fs.existsSync(fwPath)) {
       throw new RoleNotFoundError(role);
     }
-    return JSON.parse(fs.readFileSync(fwPath, 'utf-8')) as Framework;
+    const parsed = JSON.parse(fs.readFileSync(fwPath, 'utf-8')) as Framework;
+    if (!parsed.role_display) {
+      parsed.role_display = parsed.role ?? role;
+    }
+    return parsed;
   }
 
   writeFramework(role: string, fw: Framework): void {
     const fwPath = path.join(this.baseDir, 'roles', role, 'framework.json');
-    this._safeWrite(fwPath, fw);
+    const toWrite: Framework = {
+      ...fw,
+      role_display: fw.role_display ?? fw.role ?? role,
+    };
+    this._safeWrite(fwPath, toWrite);
     this._appendAudit({
       timestamp: new Date().toISOString(),
       tool: 'store',
@@ -167,6 +190,190 @@ export class RecruiterStore {
       .readdirSync(rolesDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
+  }
+
+  // ── Role Resolution ──────────────────────────────────────────────────────
+
+  private _readDisplay(canonical: string): string {
+    const fwPath = path.join(this.baseDir, 'roles', canonical, 'framework.json');
+    if (!fs.existsSync(fwPath)) return canonical;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(fwPath, 'utf-8')) as Framework;
+      return parsed.role_display ?? parsed.role ?? canonical;
+    } catch {
+      return canonical;
+    }
+  }
+
+  listRolesWithDisplay(): Array<{ canonical: string; display: string }> {
+    return this.listRoles().map((canonical) => ({
+      canonical,
+      display: this._readDisplay(canonical),
+    }));
+  }
+
+  resolveRole(input: string): RoleResolution {
+    const folders = this.listRoles();
+
+    // Exact match against existing folder name
+    if (folders.includes(input)) {
+      return { status: 'exact', canonical: input, display: this._readDisplay(input) };
+    }
+
+    const normalized = slugify(input);
+    const matches = folders.filter((f) => slugify(f) === normalized);
+
+    if (matches.length === 1) {
+      const canonical = matches[0];
+      return {
+        status: 'normalized',
+        canonical,
+        display: this._readDisplay(canonical),
+        input,
+      };
+    }
+
+    if (matches.length >= 2) {
+      return {
+        status: 'ambiguous',
+        input,
+        candidates: matches.map((canonical) => ({
+          canonical,
+          display: this._readDisplay(canonical),
+        })),
+      };
+    }
+
+    return {
+      status: 'not_found',
+      input,
+      available: folders.map((canonical) => ({
+        canonical,
+        display: this._readDisplay(canonical),
+      })),
+    };
+  }
+
+  canonicalizeForNewRole(
+    input: string,
+  ): { canonical: string; collision?: { existing_canonical: string; existing_display: string } } {
+    const canonical = slugify(input);
+    const folders = this.listRoles();
+    // Check if any existing folder would collide
+    const existing = folders.find((f) => f === canonical || slugify(f) === canonical);
+    if (existing) {
+      return {
+        canonical,
+        collision: {
+          existing_canonical: existing,
+          existing_display: this._readDisplay(existing),
+        },
+      };
+    }
+    return { canonical };
+  }
+
+  // ── Migration ────────────────────────────────────────────────────────────
+
+  migrateRoleFolders(options: { dryRun?: boolean } = {}): MigrationResult {
+    const dryRun = !!options.dryRun;
+    const result: MigrationResult = {
+      renamed: [],
+      skipped_collisions: [],
+      display_backfills: [],
+    };
+
+    const rolesDir = path.join(this.baseDir, 'roles');
+    if (!fs.existsSync(rolesDir)) return result;
+
+    const folders = fs
+      .readdirSync(rolesDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+
+    for (const folder of folders) {
+      const canonical = slugify(folder);
+      const sourcePath = path.join(rolesDir, folder);
+      const targetPath = path.join(rolesDir, canonical);
+      const fwPath = path.join(sourcePath, 'framework.json');
+
+      if (folder === canonical) {
+        // Already slug — only backfill role_display if missing
+        if (!fs.existsSync(fwPath)) continue;
+        let parsed: Framework;
+        try {
+          parsed = JSON.parse(fs.readFileSync(fwPath, 'utf-8')) as Framework;
+        } catch (e) {
+          result.skipped_collisions.push({
+            source: folder,
+            target: folder,
+            reason: 'framework.json corrupt or unreadable',
+          });
+          continue;
+        }
+        if (!parsed.role_display) {
+          if (dryRun) {
+            result.display_backfills.push({ canonical, display: canonical });
+          } else {
+            parsed.role_display = canonical;
+            parsed.role = canonical;
+            this._safeWrite(fwPath, parsed);
+            result.display_backfills.push({ canonical, display: canonical });
+          }
+        }
+        continue;
+      }
+
+      // Non-slug folder: needs rename
+      if (fs.existsSync(targetPath) && targetPath !== sourcePath) {
+        result.skipped_collisions.push({
+          source: folder,
+          target: canonical,
+          reason: 'target folder already exists; manual resolution required',
+        });
+        continue;
+      }
+
+      // Try to read framework to determine display name
+      let parsed: Framework | null = null;
+      if (fs.existsSync(fwPath)) {
+        try {
+          parsed = JSON.parse(fs.readFileSync(fwPath, 'utf-8')) as Framework;
+        } catch {
+          result.skipped_collisions.push({
+            source: folder,
+            target: canonical,
+            reason: 'framework.json corrupt or unreadable',
+          });
+          continue;
+        }
+      }
+
+      const display = parsed?.role_display ?? folder;
+
+      if (dryRun) {
+        result.renamed.push({ from: folder, to: canonical, display });
+        continue;
+      }
+
+      fs.renameSync(sourcePath, targetPath);
+      const newFwPath = path.join(targetPath, 'framework.json');
+      if (fs.existsSync(newFwPath)) {
+        try {
+          const fw = JSON.parse(fs.readFileSync(newFwPath, 'utf-8')) as Framework;
+          fw.role = canonical;
+          if (!fw.role_display) {
+            fw.role_display = folder;
+          }
+          this._safeWrite(newFwPath, fw);
+        } catch {
+          // corrupt; leave alone but still record rename
+        }
+      }
+      result.renamed.push({ from: folder, to: canonical, display });
+    }
+
+    return result;
   }
 
   // ── Candidate Operations ─────────────────────────────────────────────────

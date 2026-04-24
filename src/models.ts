@@ -167,6 +167,7 @@ export interface Dimension {
 export interface Framework {
   schema_version: number;
   role: string;
+  role_display: string;
   dimensions: Dimension[];
   confirmed: boolean;
   created_at: string;
