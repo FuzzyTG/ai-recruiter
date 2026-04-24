@@ -1570,14 +1570,18 @@ export function createHandlers(deps: ServerDeps) {
             );
           }
 
-          // Build lookup map: email -> { role, candidate_id, conversation_id, name }
+          // Build lookup maps:
+          //   threadMap: threadId -> candidate (primary, handles shared emails)
+          //   candidateMap: email -> candidate[] (fallback for new threads)
           const roles = args.role ? [args.role] : store.listRoles();
-          const candidateMap = new Map<string, {
+          type CandidateMatch = {
             role: string;
             candidate_id: string;
             conversation_id: string;
             name: string;
-          }>();
+          };
+          const threadMap = new Map<string, CandidateMatch>();
+          const candidateMap = new Map<string, CandidateMatch[]>();
 
           // Collect known message_ids from all candidate conversations
           const knownMessageIds = new Set<string>();
@@ -1585,18 +1589,25 @@ export function createHandlers(deps: ServerDeps) {
           for (const role of roles) {
             const candidates = store.listCandidates(role);
             for (const c of candidates) {
-              const email = c.channels.email.toLowerCase();
-              candidateMap.set(email, {
+              const entry: CandidateMatch = {
                 role: c.role,
                 candidate_id: c.candidate_id,
                 conversation_id: c.conversation_id,
                 name: c.name,
-              });
+              };
 
-              // Read existing conversation to collect known message_ids
+              const email = c.channels.email.toLowerCase();
+              const existing = candidateMap.get(email) ?? [];
+              existing.push(entry);
+              candidateMap.set(email, existing);
+
+              // Read existing conversation to collect known message_ids and thread_ids
               const messages = store.readConversation(c.conversation_id);
               for (const msg of messages) {
                 knownMessageIds.add(msg.message_id);
+                if (msg.agentmail_thread_id) {
+                  threadMap.set(msg.agentmail_thread_id, entry);
+                }
               }
             }
           }
@@ -1636,8 +1647,11 @@ export function createHandlers(deps: ServerDeps) {
             // Skip already-known messages
             if (knownMessageIds.has(msg.messageId)) continue;
 
-            const senderEmail = parseEmailAddress(msg.from);
-            const match = candidateMap.get(senderEmail);
+            // Primary: match by thread ID (handles shared emails correctly)
+            // Fallback: match by sender email (for new, un-threaded messages)
+            const match = (msg.threadId && threadMap.get(msg.threadId))
+              ?? (candidateMap.get(parseEmailAddress(msg.from)) ?? [])[0]
+              ?? null;
 
             if (match) {
               // Append to conversation log
