@@ -1240,7 +1240,12 @@ export function createHandlers(deps: ServerDeps) {
     narrative?: string;
   }): Promise<ToolResult> {
     try {
-      const candidate = store.readCandidate(args.role, args.candidate_id);
+      let candidate = store.readCandidate(args.role, args.candidate_id);
+
+      // Auto-transition interview_done → evaluating
+      if (candidate.state === CandidateState.InterviewDone) {
+        candidate = store.transitionState(args.role, args.candidate_id, CandidateState.Evaluating);
+      }
 
       // Run preflight
       const preflightChecks = validators.runPreflight('recruit_evaluate', {
