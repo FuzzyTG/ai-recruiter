@@ -851,6 +851,9 @@ export function createHandlers(deps: ServerDeps) {
           attendeeEmail: candidate.channels.email,
           attendeeName: candidate.name,
           uid: icsUid,
+          timezone: config.timezone,
+          hmEmail: config.cc_email,
+          hmName: config.hm_name,
         });
 
         // CRITICAL: Send confirmation email BEFORE state transition (Hard Rule 4)
@@ -990,6 +993,9 @@ export function createHandlers(deps: ServerDeps) {
               organizerName: config.hm_name,
               attendeeEmail: candidate.channels.email,
               attendeeName: candidate.name,
+              timezone: config.timezone,
+              hmEmail: config.cc_email,
+              hmName: config.hm_name,
             });
 
             // Validate cancel ICS

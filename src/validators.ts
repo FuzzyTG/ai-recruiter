@@ -155,9 +155,9 @@ export function validateIcs(icsContent: string): string[] {
   if (!icsContent.includes('VERSION:2.0')) {
     errors.push('Missing VERSION:2.0');
   }
-  const hasValidMethod = icsContent.includes('METHOD:PUBLISH') || icsContent.includes('METHOD:CANCEL');
+  const hasValidMethod = icsContent.includes('METHOD:PUBLISH') || icsContent.includes('METHOD:CANCEL') || icsContent.includes('METHOD:REQUEST');
   if (!hasValidMethod) {
-    errors.push('Missing METHOD (must be PUBLISH or CANCEL)');
+    errors.push('Missing METHOD (must be PUBLISH, REQUEST, or CANCEL)');
   }
 
   const hasVeventStart = icsContent.includes('BEGIN:VEVENT');
