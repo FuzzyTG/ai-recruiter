@@ -8,6 +8,7 @@ import {
   CandidateNotFoundError,
   IllegalTransitionError,
   ApprovalRequiredError,
+  type RoleResolution,
 } from './store.js';
 import { RecruiterMailClient, EmailSendError, type InboundMessage } from './emailClient.js';
 import * as calendar from './calendar.js';
@@ -134,6 +135,21 @@ function success(data: Record<string, unknown>) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type ToolResult = {
+  content: Array<{ type: 'text'; text: string }>;
+  isError?: boolean;
+};
+
+export interface ServerDeps {
+  store: RecruiterStore;
+  emailClient?: RecruiterMailClient;
+  apiKey?: string;
+}
+
 function failure(
   error: string,
   message: string,
@@ -151,18 +167,45 @@ function failure(
 }
 
 // ---------------------------------------------------------------------------
-// Types
+// Role resolution helpers
 // ---------------------------------------------------------------------------
 
-type ToolResult = {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-};
+const ROLE_LIST_CAP = 10;
 
-export interface ServerDeps {
-  store: RecruiterStore;
-  emailClient?: RecruiterMailClient;
-  apiKey?: string;
+function capRoleList<T>(list: T[]): { shown: T[]; truncated: number } {
+  if (list.length <= ROLE_LIST_CAP) return { shown: list, truncated: 0 };
+  return { shown: list.slice(0, ROLE_LIST_CAP), truncated: list.length - ROLE_LIST_CAP };
+}
+
+function roleResolutionError(res: RoleResolution): ToolResult | null {
+  if (res.status === 'exact' || res.status === 'normalized') return null;
+  if (res.status === 'ambiguous') {
+    const { shown, truncated } = capRoleList(res.candidates);
+    const names = shown.map((c) => c.display).join(', ');
+    const suffix = truncated > 0 ? ` (and ${truncated} more)` : '';
+    return failure(
+      'role_ambiguous',
+      `Multiple roles matched "${res.input}". Ask HM to pick: ${names}${suffix}`,
+      {
+        input: res.input,
+        candidates: shown,
+        truncated_candidates: truncated,
+      },
+    );
+  }
+  // not_found
+  const { shown, truncated } = capRoleList(res.available);
+  const names = shown.map((c) => c.display).join(', ');
+  const suffix = truncated > 0 ? ` (and ${truncated} more)` : '';
+  return failure(
+    'role_not_found',
+    `No role matches "${res.input}". Available roles: ${names}${suffix}. Use recruit_setup to create a new role.`,
+    {
+      input: res.input,
+      available: shown,
+      truncated_available: truncated,
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +325,37 @@ export function createHandlers(deps: ServerDeps) {
         _emailClient = undefined; // force re-init on next getEmailClient()
       }
 
+      // ── Role resolution (single-writer via store) ──
+      // Determine canonical role slug + display for this call.
+      let role: string = args.role;
+      let roleDisplay: string = args.role;
+      if (args.role) {
+        const resolution = store.resolveRole(args.role);
+        if (resolution.status === 'ambiguous') {
+          const err = roleResolutionError(resolution);
+          if (err) return err;
+        }
+        if (resolution.status === 'not_found') {
+          // Creating a new role; canonicalize via store.
+          const { canonical, collision } = store.canonicalizeForNewRole(args.role);
+          if (collision) {
+            return failure(
+              'role_ambiguous',
+              `"${args.role}" normalizes to existing role "${collision.existing_display}". Use that role or pick a different name.`,
+              {
+                input: args.role,
+                candidates: [{ canonical: collision.existing_canonical, display: collision.existing_display }],
+              },
+            );
+          }
+          role = canonical;
+          roleDisplay = args.role;
+        } else if (resolution.status === 'exact' || resolution.status === 'normalized') {
+          role = resolution.canonical;
+          roleDisplay = resolution.display;
+        }
+      }
+
       // Step 1: Config creation
       if (!store.configExists()) {
         const missing: string[] = [];
@@ -364,7 +438,7 @@ export function createHandlers(deps: ServerDeps) {
 
         // Check if framework already exists and is confirmed
         try {
-          const existingFw = store.readFramework(args.role);
+          const existingFw = store.readFramework(role);
           if (existingFw.confirmed) {
             return failure(
               'validation_error',
@@ -378,25 +452,27 @@ export function createHandlers(deps: ServerDeps) {
 
         const fw: Framework = {
           schema_version: 1,
-          role: args.role,
+          role,
+          role_display: roleDisplay,
           dimensions: args.dimensions,
           confirmed: false,
           created_at: new Date().toISOString(),
         };
-        store.writeFramework(args.role, fw);
+        store.writeFramework(role, fw);
         framework_created = true;
       }
 
       // Step 4: JD
       if (args.jd) {
-        store.writeJd(args.role, args.jd);
+        store.writeJd(role, args.jd);
       }
 
       // Step 5: Confirm framework
       if (args.confirm === true) {
-        const fw = store.readFramework(args.role);
+        const fw = store.readFramework(role);
         fw.confirmed = true;
-        store.writeFramework(args.role, fw);
+        if (!fw.role_display) fw.role_display = roleDisplay;
+        store.writeFramework(role, fw);
         framework_confirmed = true;
       }
 
@@ -405,6 +481,8 @@ export function createHandlers(deps: ServerDeps) {
         config_updated,
         framework_created,
         framework_confirmed,
+        role_resolved: role,
+        role_display: roleDisplay,
       };
       if (inbox_email) {
         result.inbox_email = inbox_email;
@@ -428,8 +506,14 @@ export function createHandlers(deps: ServerDeps) {
     approved: boolean;
   }): Promise<ToolResult> {
     try {
+      const resolution = store.resolveRole(args.role);
+      const errResp = roleResolutionError(resolution);
+      if (errResp) return errResp;
+      const role = (resolution as Extract<RoleResolution, { canonical: string }>).canonical;
+      const roleDisplay = (resolution as Extract<RoleResolution, { display: string }>).display;
+
       // Read framework, must be confirmed
-      const framework = store.readFramework(args.role);
+      const framework = store.readFramework(role);
       if (!framework.confirmed) {
         return failure(
           'validation_error',
@@ -466,7 +550,7 @@ export function createHandlers(deps: ServerDeps) {
       );
 
       // Generate candidate ID
-      const candidateId = store.generateCandidateId(args.role);
+      const candidateId = store.generateCandidateId(role);
       const conversationId = `conv-${candidateId}`;
 
       // Build candidate
@@ -479,7 +563,7 @@ export function createHandlers(deps: ServerDeps) {
           primary: 'email',
           email: args.email,
         },
-        role: args.role,
+        role,
         state: CandidateState.New,
         state_updated: now,
         pending_action: 'Screen resume',
@@ -496,35 +580,30 @@ export function createHandlers(deps: ServerDeps) {
       };
 
       // Write candidate, resume, conversation
-      store.writeCandidate(args.role, candidate);
-      store.writeResumeMarkdown(args.role, candidateId, args.resume_markdown);
+      store.writeCandidate(role, candidate);
+      store.writeResumeMarkdown(role, candidateId, args.resume_markdown);
       store.createConversation(conversationId);
 
       // Transition new -> screening (no approval needed)
-      store.transitionState(args.role, candidateId, CandidateState.Screening);
+      store.transitionState(role, candidateId, CandidateState.Screening);
 
       // Transition based on score
       if (weightedAvg >= 0.6) {
-        // screening -> screened_pass: not in APPROVAL_REQUIRED_TRANSITIONS
         store.transitionState(
-          args.role,
+          role,
           candidateId,
           CandidateState.ScreenedPass,
         );
       } else {
-        // screening -> screened_reject: requires approval (Rejected is approval-gated)
-        // Actually screened_reject != Rejected enum value. Check model: ScreenedReject is its own state.
-        // isApprovalRequired checks if to === Scheduling | Rejected | HomeworkAssigned
-        // ScreenedReject is NOT Rejected, so no approval needed.
         store.transitionState(
-          args.role,
+          role,
           candidateId,
           CandidateState.ScreenedReject,
         );
       }
 
       // Read final state
-      const updatedCandidate = store.readCandidate(args.role, candidateId);
+      const updatedCandidate = store.readCandidate(role, candidateId);
 
       return success({
         candidate_id: candidateId,
@@ -532,6 +611,8 @@ export function createHandlers(deps: ServerDeps) {
         overall_score: weightedAvg,
         state: updatedCandidate.state,
         dimensions: args.scores,
+        role_resolved: role,
+        role_display: roleDisplay,
       });
     } catch (e) {
       return handleError(e);
@@ -554,8 +635,14 @@ export function createHandlers(deps: ServerDeps) {
     homework_deadline?: string;
   }): Promise<ToolResult> {
     try {
+      const resolution = store.resolveRole(args.role);
+      const errResp = roleResolutionError(resolution);
+      if (errResp) return errResp;
+      const role = (resolution as Extract<RoleResolution, { canonical: string }>).canonical;
+      const roleDisplay = (resolution as Extract<RoleResolution, { display: string }>).display;
+
       const config = store.readConfig();
-      const candidate = store.readCandidate(args.role, args.candidate_id);
+      const candidate = store.readCandidate(role, args.candidate_id);
 
       if (args.action === 'propose' || args.action === 'resend') {
         // Validate state
