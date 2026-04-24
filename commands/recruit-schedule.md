@@ -7,6 +7,7 @@ description: Schedule an interview — propose time slots, confirm, resend, or c
 
 - All file I/O and email sending goes through MCP tools. Never write files or send emails directly.
 - **LLM composes body text only.** Do NOT include sign-offs (e.g., "Best regards,"), names, signatures, separators ("---"), or AI disclaimers in email drafts. The server appends the signature automatically via `appendSignature()`.
+- **Plain text only in `email_body`.** Do not use Markdown formatting — no `**`, `_`, `#`, `[]()`, or bullet lists with `- `. The email is sent as `text/plain`; Markdown symbols render as literal characters in the recipient's inbox.
 - **NEVER write date-weekday combinations in email drafts before calling MCP.** The server finds free slots from the calendar. Only after receiving slot ISO strings from MCP should you format dates with weekday names.
 - Derive weekday names from ISO date strings programmatically. Do not guess or calculate weekdays yourself.
 - The server validates date-weekday correctness in email bodies. Mismatches cause rejection.

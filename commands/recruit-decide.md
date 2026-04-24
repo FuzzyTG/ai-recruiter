@@ -7,6 +7,7 @@ description: Make a hiring decision (hire or reject) and notify the candidate vi
 
 - All file I/O and email sending goes through MCP tools. Never write files or send emails directly.
 - **LLM composes body text only.** Do NOT include sign-offs (e.g., "Best regards,"), names, signatures, separators ("---"), or AI disclaimers in email drafts. The server appends the signature automatically via `appendSignature()`.
+- **Plain text only in `email_body`.** Do not use Markdown formatting — no `**`, `_`, `#`, `[]()`, or bullet lists with `- `. The email is sent as `text/plain`; Markdown symbols render as literal characters in the recipient's inbox.
 - **Every decision requires explicit HM approval.** Show the exact email that will be sent, get "yes", then call MCP with `approved: true`.
 - The server sends the email BEFORE transitioning state (Hard Rule 4). If email fails, state remains unchanged. Do not retry silently — inform HM.
 - Date-weekday in email bodies is validated by the server. If the email mentions dates, derive weekday names from ISO strings.
