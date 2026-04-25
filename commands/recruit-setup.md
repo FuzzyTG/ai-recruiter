@@ -8,13 +8,14 @@ description: Set up recruiting config, evaluation framework, and job description
 - All file I/O goes through MCP tools. Never write to `~/.recruiter/` directly.
 - Never compute dimension weights yourself. Present them, let HM adjust, then let MCP validate they sum to 1.0.
 - Match all output to `config.language` (zh or en). If this is first-time setup, ask HM for preferred language.
+- **Role resolution is silent on success.** When the MCP returns `role_resolved` / `role_display`, use the canonical slug without asking HM to confirm. Only prompt HM if the response is `role_ambiguous` (ask them to pick) or `role_not_found` (show available roles).
 
 ## Dependency Guard
 
 **[MCP]** Call `recruit_status({ query_type: "overview" })`.
 
 - If `setup_required` error → this is a fresh install. Proceed to Step 0.
-- If success → config exists. Proceed to Step 0 to verify the API key is available, then skip to Step 3 (framework creation).
+- If success → config exists. Proceed to Step 0 to verify the API key is available, then go to Step 1B (show existing config and offer updates), then skip to Step 3 (framework creation).
 - If role already has a confirmed framework → inform HM. They can create a new role or skip. Still check Step 0 for API key.
 
 ## Protocol
@@ -39,6 +40,24 @@ description: Set up recruiting config, evaluation framework, and job description
 | `inbox_username` | No | Local part for recruiting inbox (e.g., "quan-interview" → quan-interview@agentmail.to). If omitted, a random name is generated. |
 
 Collect conversationally. Don't dump the table — ask naturally. For `calendar_url` and `meeting_link`, explain why they matter: without a calendar URL, the agent cannot find free interview slots. If HM doesn't have one yet, acknowledge and warn that `/recruit-schedule` will not work until it's added.
+
+### Step 1B: Show Existing Config (returning users only)
+
+**[LLM]** If config already exists (Dependency Guard returned success), display current values in a compact summary:
+
+```
+Current Config
+━━━━━━━━━━━━━━
+Name:         Quan
+Company:      Microsoft
+Email:        alexyuan@microsoft.com
+Timezone:     Asia/Shanghai
+Calendar:     ✓ set
+Meeting link: ✓ set
+Inbox:        magnificentpaper249@agentmail.to
+```
+
+Then ask: "Want to update any of these, or proceed to set up a new role?" If HM wants to update fields, collect only the changed values and call `recruit_setup` with those fields. Do NOT re-ask for fields the HM didn't mention. Then proceed to Step 3.
 
 ### Step 2: Create Config
 
