@@ -89,6 +89,93 @@ describe('parseCalendarString', () => {
     expect(slots[1].summary).toBe('Mid');
     expect(slots[2].summary).toBe('Late');
   });
+
+  it('should expand recurring events within the given date range', () => {
+    // A weekly recurring event on Wednesdays at 10:00-11:00 UTC
+    const icsLines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Test//Test//EN',
+      'BEGIN:VEVENT',
+      'UID:recurring-test@test',
+      'DTSTART:20260415T100000Z',
+      'DTEND:20260415T110000Z',
+      'RRULE:FREQ=WEEKLY;COUNT=4',
+      'SUMMARY:Weekly Standup',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    // Range covers 3 weeks from April 15
+    const rangeStart = new Date('2026-04-15T00:00:00Z');
+    const rangeEnd = new Date('2026-05-06T00:00:00Z');
+
+    const slots = parseCalendarString(icsLines, { rangeStart, rangeEnd });
+
+    // Should have 3 instances (Apr 15, Apr 22, Apr 29; May 6 is at boundary)
+    expect(slots.length).toBeGreaterThanOrEqual(3);
+    expect(slots[0].summary).toBe('Weekly Standup');
+    // Verify they are on different dates
+    const dates = slots.map(s => s.start.toISOString().slice(0, 10));
+    expect(new Set(dates).size).toBe(slots.length);
+  });
+
+  it('should exclude events with BUSYSTATUS=FREE', () => {
+    const icsLines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Test//Test//EN',
+      'BEGIN:VEVENT',
+      'UID:free-event@test',
+      'DTSTART:20260415T090000Z',
+      'DTEND:20260415T100000Z',
+      'SUMMARY:Free Block',
+      'X-MICROSOFT-CDO-BUSYSTATUS:FREE',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:busy-event@test',
+      'DTSTART:20260415T110000Z',
+      'DTEND:20260415T120000Z',
+      'SUMMARY:Busy Meeting',
+      'X-MICROSOFT-CDO-BUSYSTATUS:BUSY',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const slots = parseCalendarString(icsLines);
+
+    expect(slots).toHaveLength(1);
+    expect(slots[0].summary).toBe('Busy Meeting');
+  });
+
+  it('should include events with BUSYSTATUS=TENTATIVE and OOF', () => {
+    const icsLines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Test//Test//EN',
+      'BEGIN:VEVENT',
+      'UID:tentative@test',
+      'DTSTART:20260415T090000Z',
+      'DTEND:20260415T100000Z',
+      'SUMMARY:Tentative',
+      'X-MICROSOFT-CDO-BUSYSTATUS:TENTATIVE',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:oof@test',
+      'DTSTART:20260415T110000Z',
+      'DTEND:20260415T120000Z',
+      'SUMMARY:Out of Office',
+      'X-MICROSOFT-CDO-BUSYSTATUS:OOF',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const slots = parseCalendarString(icsLines);
+
+    expect(slots).toHaveLength(2);
+    expect(slots[0].summary).toBe('Tentative');
+    expect(slots[1].summary).toBe('Out of Office');
+  });
 });
 
 // ---------------------------------------------------------------------------

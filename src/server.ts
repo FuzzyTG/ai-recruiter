@@ -686,7 +686,17 @@ export function createHandlers(deps: ServerDeps) {
         }
 
         // Parse calendar
-        const busySlots = await calendar.parseCalendarFeed(config.calendar_url);
+        const durationMinutes = args.duration_minutes ?? 60;
+        const numSlots = args.num_slots ?? 3;
+        const rangeStart = new Date();
+        const rangeEnd = new Date(
+          rangeStart.getTime() + 14 * 24 * 60 * 60 * 1000,
+        ); // 2 weeks out
+
+        const busySlots = await calendar.parseCalendarFeed(config.calendar_url, {
+          rangeStart,
+          rangeEnd,
+        });
 
         // Get already offered slots
         const offeredSlots = store.getOfferedSlots(args.role);
@@ -696,12 +706,6 @@ export function createHandlers(deps: ServerDeps) {
         }));
 
         // Find free slots
-        const durationMinutes = args.duration_minutes ?? 60;
-        const numSlots = args.num_slots ?? 3;
-        const rangeStart = new Date();
-        const rangeEnd = new Date(
-          rangeStart.getTime() + 14 * 24 * 60 * 60 * 1000,
-        ); // 2 weeks out
 
         const freeSlots = calendar.findFreeSlots(busySlots, {
           rangeStart,

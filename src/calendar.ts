@@ -234,7 +234,10 @@ function dateAtHourInTz(base: Date, hour: number, tz: string): Date {
  * Fetch and parse an iCalendar feed from a URL.
  * Returns busy slots extracted from VEVENT components (all-day events excluded).
  */
-export async function parseCalendarFeed(url: string): Promise<BusySlot[]> {
+export async function parseCalendarFeed(
+  url: string,
+  options?: { rangeStart?: Date; rangeEnd?: Date },
+): Promise<BusySlot[]> {
   let data: CalendarResponse;
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
@@ -247,41 +250,32 @@ export async function parseCalendarFeed(url: string): Promise<BusySlot[]> {
     throw new CalendarFetchError(url, err instanceof Error ? err : new Error(String(err)));
   }
 
-  const slots: BusySlot[] = [];
+  const rangeStart = options?.rangeStart ?? new Date();
+  const rangeEnd = options?.rangeEnd ?? new Date(rangeStart.getTime() + 14 * 24 * 60 * 60 * 1000);
 
-  for (const key of Object.keys(data)) {
-    const component = data[key];
-    if (!component || component.type !== 'VEVENT') continue;
-
-    const event = component as VEvent;
-    const start = event.start ? new Date(event.start as unknown as string | number | Date) : null;
-    const end = event.end ? new Date(event.end as unknown as string | number | Date) : null;
-
-    if (!start || !end) continue;
-
-    // Filter all-day events: typically start at 00:00 and span >= 24 h with
-    // datetype === 'date' (node-ical specific).
-    if ((event as any).datetype === 'date') continue;
-
-    const rawSummary = event.summary;
-    const summary = typeof rawSummary === 'string'
-      ? rawSummary
-      : (rawSummary as any)?.val ?? undefined;
-
-    slots.push({ start, end, summary });
-  }
-
-  // Sort chronologically
-  slots.sort((a, b) => a.start.getTime() - b.start.getTime());
-
-  return slots;
+  return extractBusySlots(data, rangeStart, rangeEnd);
 }
 
 /**
  * Parse an ICS string directly (useful for testing without network).
  */
-export function parseCalendarString(icsString: string): BusySlot[] {
+export function parseCalendarString(
+  icsString: string,
+  options?: { rangeStart?: Date; rangeEnd?: Date },
+): BusySlot[] {
   const data = nodeIcal.parseICS(icsString) as CalendarResponse;
+
+  const rangeStart = options?.rangeStart ?? new Date();
+  const rangeEnd = options?.rangeEnd ?? new Date(rangeStart.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+  return extractBusySlots(data, rangeStart, rangeEnd);
+}
+
+/**
+ * Shared logic for extracting busy slots from parsed calendar data.
+ * Handles RRULE expansion and BUSYSTATUS filtering.
+ */
+function extractBusySlots(data: CalendarResponse, rangeStart: Date, rangeEnd: Date): BusySlot[] {
   const slots: BusySlot[] = [];
 
   for (const key of Object.keys(data)) {
@@ -289,11 +283,38 @@ export function parseCalendarString(icsString: string): BusySlot[] {
     if (!component || component.type !== 'VEVENT') continue;
 
     const event = component as VEvent;
+
+    // Check BUSYSTATUS — skip events marked as FREE
+    const busyStatus = (event as any)['MICROSOFT-CDO-BUSYSTATUS'] ?? (event as any)['X-MICROSOFT-CDO-BUSYSTATUS'];
+    if (busyStatus === 'FREE') continue;
+
+    // Handle recurring events
+    if ((event as any).rrule) {
+      const instances = nodeIcal.expandRecurringEvent(event, { from: rangeStart, to: rangeEnd });
+      for (const instance of instances) {
+        if ((instance as any).isFullDay === true) continue;
+
+        const start = instance.start ? new Date(instance.start as unknown as string | number | Date) : null;
+        const end = instance.end ? new Date(instance.end as unknown as string | number | Date) : null;
+        if (!start || !end) continue;
+
+        const rawSummary = instance.summary;
+        const summary = typeof rawSummary === 'string'
+          ? rawSummary
+          : (rawSummary as any)?.val ?? undefined;
+
+        slots.push({ start, end, summary });
+      }
+      continue;
+    }
+
+    // Non-recurring event
     const start = event.start ? new Date(event.start as unknown as string | number | Date) : null;
     const end = event.end ? new Date(event.end as unknown as string | number | Date) : null;
 
     if (!start || !end) continue;
 
+    // Filter all-day events
     if ((event as any).datetype === 'date') continue;
 
     const rawSummary = event.summary;
