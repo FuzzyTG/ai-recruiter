@@ -1129,6 +1129,435 @@ describe('recruit_status', () => {
     expect(parsed.data.recent_messages).toBeDefined();
   });
 
+  it('candidate: syncs only the requested active candidate before returning detail', async () => {
+    const target = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+      channels: { primary: 'email' as const, email: 'target@test.com' },
+    });
+    const other = makeCandidate({
+      candidate_id: 'C-20260414-011',
+      conversation_id: 'conv-C-20260414-011',
+      channels: { primary: 'email' as const, email: 'other@test.com' },
+    });
+    store.writeCandidate('test-role', target);
+    store.writeCandidate('test-role', other);
+    store.createConversation('conv-C-20260414-010');
+    store.createConversation('conv-C-20260414-011');
+
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'target-msg-001',
+          threadId: undefined,
+          from: 'target@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Re: Interview',
+          text: 'Target reply',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+        {
+          messageId: 'other-msg-001',
+          threadId: 'thread-other',
+          from: 'other@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Re: Interview',
+          text: 'Other reply',
+          receivedAt: '2026-04-15T10:05:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({
+      query_type: 'candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.synced).toBe(1);
+    expect(parsed.data.recent_messages.map((m: any) => m.message_id)).toContain('target-msg-001');
+    expect(store.readConversation('conv-C-20260414-011')).toHaveLength(0);
+  });
+
+  it('overview: syncs active candidates across roles and skips terminal candidates', async () => {
+    store.writeFramework('other-role', makeFramework('other-role'));
+    const activeA = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+      channels: { primary: 'email' as const, email: 'active-a@test.com' },
+    });
+    const activeB = makeCandidate({
+      candidate_id: 'C-20260414-002',
+      role: 'other-role',
+      conversation_id: 'conv-C-20260414-002',
+      channels: { primary: 'email' as const, email: 'active-b@test.com' },
+    });
+    const terminal = makeCandidate({
+      candidate_id: 'C-20260414-003',
+      conversation_id: 'conv-C-20260414-003',
+      state: CandidateState.Hired,
+      channels: { primary: 'email' as const, email: 'terminal@test.com' },
+    });
+    store.writeCandidate('test-role', activeA);
+    store.writeCandidate('other-role', activeB);
+    store.writeCandidate('test-role', terminal);
+    store.createConversation('conv-C-20260414-001');
+    store.createConversation('conv-C-20260414-002');
+    store.createConversation('conv-C-20260414-003');
+
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'active-a-msg-001',
+          threadId: undefined,
+          from: 'active-a@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Active A',
+          text: 'A reply',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+        {
+          messageId: 'active-b-msg-001',
+          threadId: undefined,
+          from: 'active-b@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Active B',
+          text: 'B reply',
+          receivedAt: '2026-04-15T10:05:00Z',
+        },
+        {
+          messageId: 'terminal-msg-001',
+          threadId: 'thread-terminal',
+          from: 'terminal@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Terminal',
+          text: 'Terminal reply',
+          receivedAt: '2026-04-15T10:10:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({ query_type: 'overview' });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.synced).toBe(2);
+    expect(store.readConversation('conv-C-20260414-001')).toHaveLength(1);
+    expect(store.readConversation('conv-C-20260414-002')).toHaveLength(1);
+    expect(store.readConversation('conv-C-20260414-003')).toHaveLength(0);
+  });
+
+  it('candidate: returns cached detail with sync warning when inbox sync fails', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+    });
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-010');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('AgentMail API timeout'),
+    );
+
+    const result = await handlers.recruitStatus({
+      query_type: 'candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(result.isError).toBeUndefined();
+    expect(parsed.data.candidate.candidate_id).toBe('C-20260414-010');
+    expect(parsed.data.inbox_sync.warning).toContain('AgentMail API timeout');
+  });
+
+  it('candidate: does not expose out-of-scope inbox messages as unmatched metadata', async () => {
+    const target = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+      channels: { primary: 'email' as const, email: 'target@test.com' },
+    });
+    store.writeCandidate('test-role', target);
+    store.createConversation('conv-C-20260414-010');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'unrelated-msg-001',
+          threadId: 'thread-unrelated',
+          from: 'other@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Private other candidate subject',
+          text: 'Other candidate reply',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({
+      query_type: 'candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.unmatched).toBe(0);
+    expect(parsed.data.inbox_sync.unmatched_messages).toHaveLength(0);
+  });
+
+  it('overview: does not route terminal candidate unknown-thread replies to active candidates with the same email', async () => {
+    const active = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+      channels: { primary: 'email' as const, email: 'shared@test.com' },
+    });
+    const terminal = makeCandidate({
+      candidate_id: 'C-20260414-002',
+      conversation_id: 'conv-C-20260414-002',
+      state: CandidateState.Hired,
+      channels: { primary: 'email' as const, email: 'shared@test.com' },
+    });
+    store.writeCandidate('test-role', active);
+    store.writeCandidate('test-role', terminal);
+    store.createConversation('conv-C-20260414-001');
+    store.createConversation('conv-C-20260414-002');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'terminal-reply-msg-001',
+          threadId: 'unknown-terminal-thread',
+          from: 'shared@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Re: Closed thread',
+          text: 'Reply on closed thread',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({ query_type: 'overview', role: 'test-role' });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.synced).toBe(0);
+    expect(store.readConversation('conv-C-20260414-001')).toHaveLength(0);
+    expect(store.readConversation('conv-C-20260414-002')).toHaveLength(0);
+  });
+
+  it('candidate: does not use unknown-thread sender fallback for a shared email', async () => {
+    const target = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+      channels: { primary: 'email' as const, email: 'shared@test.com' },
+    });
+    const other = makeCandidate({
+      candidate_id: 'C-20260414-011',
+      conversation_id: 'conv-C-20260414-011',
+      channels: { primary: 'email' as const, email: 'shared@test.com' },
+    });
+    store.writeCandidate('test-role', target);
+    store.writeCandidate('test-role', other);
+    store.createConversation('conv-C-20260414-010');
+    store.createConversation('conv-C-20260414-011');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'shared-unknown-thread-msg-001',
+          threadId: 'unknown-shared-thread',
+          from: 'shared@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Shared sender',
+          text: 'Shared sender reply',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({
+      query_type: 'candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.synced).toBe(0);
+    expect(store.readConversation('conv-C-20260414-010')).toHaveLength(0);
+    expect(store.readConversation('conv-C-20260414-011')).toHaveLength(0);
+  });
+
+  it('overview: uses sender-email fallback only without a thread ID for one active candidate', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+      channels: { primary: 'email' as const, email: 'unique@test.com' },
+    });
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-001');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'unique-no-thread-msg-001',
+          threadId: undefined,
+          from: 'unique@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'No thread',
+          text: 'No thread reply',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({ query_type: 'overview', role: 'test-role' });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.synced).toBe(1);
+    expect(store.readConversation('conv-C-20260414-001')).toHaveLength(1);
+  });
+
+  it('overview: does not use sender-email fallback when an unknown thread ID is present', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+      channels: { primary: 'email' as const, email: 'unique@test.com' },
+    });
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-001');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'unique-unknown-thread-msg-001',
+          threadId: 'unknown-thread',
+          from: 'unique@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Unknown thread',
+          text: 'Unknown thread reply',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({ query_type: 'overview', role: 'test-role' });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.synced).toBe(0);
+    expect(store.readConversation('conv-C-20260414-001')).toHaveLength(0);
+  });
+
+  it('overview: routes known thread replies by thread instead of sender email', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+      channels: { primary: 'email' as const, email: 'candidate@test.com' },
+    });
+    const other = makeCandidate({
+      candidate_id: 'C-20260414-002',
+      conversation_id: 'conv-C-20260414-002',
+      channels: { primary: 'email' as const, email: 'shared@test.com' },
+    });
+    store.writeCandidate('test-role', c);
+    store.writeCandidate('test-role', other);
+    store.createConversation('conv-C-20260414-001');
+    store.createConversation('conv-C-20260414-002');
+    store.appendMessage('conv-C-20260414-001', {
+      schema_version: 1,
+      message_id: 'existing-thread-msg-001',
+      direction: 'outbound',
+      from: 'recruiter@agentmail.to',
+      to: ['candidate@test.com'],
+      cc: [],
+      subject: 'Interview',
+      body: 'Please pick a slot.',
+      timestamp: '2026-04-14T10:00:00Z',
+      agentmail_thread_id: 'known-thread',
+    });
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'known-thread-reply-msg-001',
+          threadId: 'known-thread',
+          from: 'shared@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Re: Interview',
+          text: 'Reply on known thread',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({ query_type: 'overview', role: 'test-role' });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.synced).toBe(1);
+    expect(store.readConversation('conv-C-20260414-001')).toHaveLength(2);
+    expect(store.readConversation('conv-C-20260414-002')).toHaveLength(0);
+  });
+
+  it('candidate: status sync is idempotent for repeated checks', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+      channels: { primary: 'email' as const, email: 'candidate@test.com' },
+    });
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-010');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'repeat-msg-001',
+          threadId: undefined,
+          from: 'candidate@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Re: Interview',
+          text: 'Same reply',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    await handlers.recruitStatus({
+      query_type: 'candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+    });
+    const result = await handlers.recruitStatus({
+      query_type: 'candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.synced).toBe(0);
+    expect(store.readConversation('conv-C-20260414-010')).toHaveLength(1);
+  });
+
   it('timeouts: returns overdue candidates', async () => {
     // Create candidate in scheduling state with slots within 24h window
     const now = Date.now();
@@ -1156,6 +1585,52 @@ describe('recruit_status', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.data.overdue.length).toBeGreaterThan(0);
   });
+
+  it('timeouts: syncs active candidates before returning overdue candidates', async () => {
+    const now = Date.now();
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-020',
+      conversation_id: 'conv-C-20260414-020',
+      state: CandidateState.Scheduling,
+      channels: { primary: 'email' as const, email: 'candidate@test.com' },
+      state_updated: new Date(now - 72 * 60 * 60 * 1000).toISOString(),
+      offered_slots: [
+        {
+          start: new Date(now + 20 * 60 * 60 * 1000).toISOString(),
+          end: new Date(now + 21 * 60 * 60 * 1000).toISOString(),
+          offered_at: new Date(now - 72 * 60 * 60 * 1000).toISOString(),
+          candidate_id: 'C-20260414-020',
+        },
+      ],
+    });
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-020');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'timeout-msg-001',
+          threadId: undefined,
+          from: 'candidate@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Re: Slots',
+          text: 'I can make it.',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({
+      query_type: 'timeouts',
+      role: 'test-role',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.inbox_sync.synced).toBe(1);
+    expect(store.readConversation('conv-C-20260414-020')).toHaveLength(1);
+  });
 });
 
 // =========================================================================
@@ -1167,8 +1642,7 @@ describe('recruit_status (inbox)', () => {
     await setupRole(store);
   });
 
-  it('returns error when no emailClient', async () => {
-    // Create handlers WITHOUT emailClient
+  it('returns cached inbox status with warning when no emailClient', async () => {
     const handlersNoEmail = createHandlers({ store });
 
     const result = await handlersNoEmail.recruitStatus({
@@ -1176,9 +1650,10 @@ describe('recruit_status (inbox)', () => {
     });
 
     const parsed = parseResult(result);
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toBe('email_error');
-    expect(parsed.message).toContain('Email client not configured');
+    expect(parsed.success).toBe(true);
+    expect(result.isError).toBeUndefined();
+    expect(parsed.data.synced).toBe(0);
+    expect(parsed.data.warning).toContain('Email client not configured');
   });
 
   it('syncs new inbound messages to conversation log', async () => {
@@ -1196,7 +1671,7 @@ describe('recruit_status (inbox)', () => {
       messages: [
         {
           messageId: 'inbound-msg-001',
-          threadId: 'thread-100',
+          threadId: undefined,
           from: 'candidate@test.com',
           to: ['recruiter@agentmail.to'],
           cc: [],
@@ -1252,7 +1727,7 @@ describe('recruit_status (inbox)', () => {
       messages: [
         {
           messageId: 'existing-msg-001',
-          threadId: 'thread-100',
+          threadId: undefined,
           from: 'candidate@test.com',
           to: ['recruiter@agentmail.to'],
           cc: [],
@@ -1341,7 +1816,7 @@ describe('recruit_status (inbox)', () => {
       messages: [
         {
           messageId: 'outbound-msg-001',
-          threadId: 'thread-100',
+          threadId: undefined,
           from: 'recruiter@agentmail.to',
           to: ['candidate@test.com'],
           cc: [],
@@ -1380,7 +1855,7 @@ describe('recruit_status (inbox)', () => {
       messages: [
         {
           messageId: 'display-name-msg-001',
-          threadId: 'thread-300',
+          threadId: undefined,
           from: 'Jane Doe <jane@example.com>',
           to: ['recruiter@agentmail.to'],
           cc: [],
@@ -1422,7 +1897,7 @@ describe('recruit_status (inbox)', () => {
         messages: [
           {
             messageId: 'page1-msg-001',
-            threadId: 'thread-p1',
+            threadId: undefined,
             from: 'alice@test.com',
             to: ['recruiter@agentmail.to'],
             cc: [],
@@ -1438,7 +1913,7 @@ describe('recruit_status (inbox)', () => {
         messages: [
           {
             messageId: 'page2-msg-001',
-            threadId: 'thread-p2',
+            threadId: undefined,
             from: 'alice@test.com',
             to: ['recruiter@agentmail.to'],
             cc: [],
@@ -1474,8 +1949,13 @@ describe('recruit_status (inbox)', () => {
     );
   });
 
-  it('returns structured error when listMessages throws', async () => {
-    // Make listMessages throw an error
+  it('returns cached inbox status with a warning when listMessages throws', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+    });
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-001');
     (emailClient.listMessages as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error('AgentMail API timeout'),
     );
@@ -1483,11 +1963,10 @@ describe('recruit_status (inbox)', () => {
     const result = await handlers.recruitStatus({ query_type: 'inbox' });
     const parsed = parseResult(result);
 
-    // Should return a structured error, not an unhandled exception
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toBeDefined();
-    expect(parsed.message).toContain('AgentMail API timeout');
-    expect(result.isError).toBe(true);
+    expect(parsed.success).toBe(true);
+    expect(result.isError).toBeUndefined();
+    expect(parsed.data.synced).toBe(0);
+    expect(parsed.data.warning).toContain('AgentMail API timeout');
   });
 
   it('routes messages to correct candidates when multiple exist', async () => {
@@ -1514,7 +1993,7 @@ describe('recruit_status (inbox)', () => {
       messages: [
         {
           messageId: 'alice-msg-001',
-          threadId: 'thread-a',
+          threadId: undefined,
           from: 'alice@test.com',
           to: ['recruiter@agentmail.to'],
           cc: [],
@@ -1524,7 +2003,7 @@ describe('recruit_status (inbox)', () => {
         },
         {
           messageId: 'bob-msg-001',
-          threadId: 'thread-b',
+          threadId: undefined,
           from: 'bob@test.com',
           to: ['recruiter@agentmail.to'],
           cc: [],
@@ -1580,7 +2059,7 @@ describe('recruit_status (inbox)', () => {
       messages: [
         {
           messageId: 'case-msg-001',
-          threadId: 'thread-case',
+          threadId: undefined,
           from: 'jane@example.com',
           to: ['recruiter@agentmail.to'],
           cc: [],
@@ -1605,7 +2084,7 @@ describe('recruit_status (inbox)', () => {
     expect(conversation).toHaveLength(1);
   });
 
-  it('cross-role email collision: last role wins in candidateMap', async () => {
+  it('cross-role email collision: treats shared sender email as unmatched', async () => {
     // Set up a second role
     store.writeFramework('role-b', makeFramework('role-b'));
 
@@ -1634,7 +2113,7 @@ describe('recruit_status (inbox)', () => {
       messages: [
         {
           messageId: 'shared-msg-001',
-          threadId: 'thread-shared',
+          threadId: undefined,
           from: 'shared@test.com',
           to: ['recruiter@agentmail.to'],
           cc: [],
@@ -1650,18 +2129,11 @@ describe('recruit_status (inbox)', () => {
     const parsed = parseResult(result);
 
     expect(parsed.success).toBe(true);
-    expect(parsed.data.synced).toBe(1);
-    expect(parsed.data.unmatched).toBe(0);
+    expect(parsed.data.synced).toBe(0);
+    expect(parsed.data.unmatched).toBe(1);
 
-    // The message should go to one of the two candidates (last one in the map wins).
-    // Since the map iterates roles in order and role-b overwrites test-role,
-    // the message should land in role-b's candidate conversation.
-    const convB = store.readConversation('conv-C-20260414-002');
-    const convA = store.readConversation('conv-C-20260414-001');
-
-    // Exactly one conversation should have the message
-    const totalMessages = convA.length + convB.length;
-    expect(totalMessages).toBe(1);
+    expect(store.readConversation('conv-C-20260414-001')).toHaveLength(0);
+    expect(store.readConversation('conv-C-20260414-002')).toHaveLength(0);
   });
 });
 
