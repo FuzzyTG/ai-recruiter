@@ -378,7 +378,14 @@ export class RecruiterStore {
 
   // ── Candidate Operations ─────────────────────────────────────────────────
 
+  private _validateCandidateId(candidateId: string): void {
+    if (!/^C-\d{8}-\d{3}$/.test(candidateId)) {
+      throw new ValidationError(`Invalid candidate_id format: ${JSON.stringify(candidateId)}`);
+    }
+  }
+
   readCandidate(role: string, candidateSlug: string): Candidate {
+    this._validateCandidateId(candidateSlug);
     const candPath = path.join(
       this.baseDir,
       'roles',
@@ -394,6 +401,7 @@ export class RecruiterStore {
 
   writeCandidate(role: string, candidate: Candidate): void {
     const slug = candidate.candidate_id;
+    this._validateCandidateId(slug);
     const candPath = path.join(
       this.baseDir,
       'roles',
@@ -779,5 +787,117 @@ export class RecruiterStore {
       return '';
     }
     return fs.readFileSync(jdPath, 'utf-8');
+  }
+
+  // ── Cleanup Operations ───────────────────────────────────────────────────
+
+  /**
+   * Delete a single candidate and all associated data:
+   * candidate JSON, resume markdown, narrative directory, and conversation logs.
+   * Writes an audit entry. Does NOT touch the audit log itself.
+   */
+  deleteCandidate(role: string, candidateId: string): { conversation_history_count: number } {
+    this._validateCandidateId(candidateId);
+
+    if (role.includes('/') || role.includes('\\')) {
+      throw new ValidationError(`Invalid role name: ${JSON.stringify(role)}`);
+    }
+
+    const rolesBase = path.resolve(this.baseDir, 'roles');
+    const roleDir = path.resolve(rolesBase, role);
+
+    if (!roleDir.startsWith(`${rolesBase}${path.sep}`)) {
+      throw new ValidationError(`Invalid role path: traversal outside roles/ detected`);
+    }
+
+    // Verify candidate exists (throws CandidateNotFoundError if not)
+    const candidate = this.readCandidate(role, candidateId);
+    const conversationHistoryCount = this.readConversation(candidate.conversation_id).length;
+
+    const candidatesDir = path.resolve(roleDir, 'candidates');
+    const resumesDir = path.resolve(candidatesDir, 'resumes');
+
+    // 1. Remove candidate JSON
+    const candPath = path.resolve(candidatesDir, `${candidateId}.json`);
+    if (!candPath.startsWith(`${candidatesDir}${path.sep}`)) {
+      throw new ValidationError(`Invalid candidate path: traversal outside candidates/ detected`);
+    }
+    if (fs.existsSync(candPath)) {
+      fs.rmSync(candPath);
+    }
+
+    // 2. Remove resume file
+    const resumePath = path.resolve(resumesDir, `${candidateId}.md`);
+    if (!resumePath.startsWith(`${resumesDir}${path.sep}`)) {
+      throw new ValidationError(`Invalid resume path: traversal outside resumes/ detected`);
+    }
+    if (fs.existsSync(resumePath)) {
+      fs.rmSync(resumePath);
+    }
+
+    // 3. Remove narrative directory
+    const narrativeDir = path.resolve(candidatesDir, candidateId);
+    if (!narrativeDir.startsWith(`${candidatesDir}${path.sep}`)) {
+      throw new ValidationError(`Invalid narrative path: traversal outside candidates/ detected`);
+    }
+    if (fs.existsSync(narrativeDir)) {
+      fs.rmSync(narrativeDir, { recursive: true, force: true });
+    }
+
+    // 4. Remove conversation directory, constrained to the conversations base.
+    const conversationsBase = path.resolve(this.baseDir, 'conversations');
+    const convDir = path.resolve(conversationsBase, candidate.conversation_id);
+    if (convDir.startsWith(`${conversationsBase}${path.sep}`) && fs.existsSync(convDir)) {
+      fs.rmSync(convDir, { recursive: true, force: true });
+    }
+
+    // 5. Audit log (never deleted)
+    this._appendAudit({
+      timestamp: new Date().toISOString(),
+      tool: 'store',
+      action: 'delete_candidate',
+      role,
+      candidate_id: candidateId,
+      details: { role, candidate_id: candidateId, conversation_id: candidate.conversation_id },
+      actor: 'hm',
+    });
+
+    return { conversation_history_count: conversationHistoryCount };
+  }
+
+  /**
+   * Delete an entire role directory (framework, candidates, JD, etc.).
+   * Does NOT touch global config, credentials, audit log, or other roles.
+   * Writes an audit entry.
+   */
+  deleteRole(role: string): void {
+    if (role.includes('/') || role.includes('\\')) {
+      throw new ValidationError(`Invalid role name: ${JSON.stringify(role)}`);
+    }
+
+    const rolesBase = path.resolve(this.baseDir, 'roles');
+    const roleDir = path.resolve(rolesBase, role);
+
+    // Sandbox: prevent path traversal outside roles/
+    if (!roleDir.startsWith(`${rolesBase}${path.sep}`)) {
+      throw new ValidationError(`Invalid role path: traversal outside roles/ detected`);
+    }
+
+    if (!fs.existsSync(roleDir)) {
+      throw new RoleNotFoundError(role);
+    }
+
+    // Remove the entire role directory
+    fs.rmSync(roleDir, { recursive: true, force: true });
+
+    // Audit log (never deleted)
+    this._appendAudit({
+      timestamp: new Date().toISOString(),
+      tool: 'store',
+      action: 'delete_role',
+      role,
+      details: { role },
+      actor: 'hm',
+    });
   }
 }

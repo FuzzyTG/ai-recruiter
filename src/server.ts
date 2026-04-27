@@ -1966,6 +1966,62 @@ export function createHandlers(deps: ServerDeps) {
     return results;
   }
 
+  // ── Tool 8: recruit_cleanup ───────────────────────────────────────────
+
+  async function recruitCleanup(args: {
+    action: 'delete_candidate' | 'delete_role';
+    role: string;
+    candidate_id?: string;
+    confirm: boolean;
+  }): Promise<ToolResult> {
+    try {
+      if (!args.confirm) {
+        return failure(
+          'approval_required',
+          'Confirmation required: cleanup operations are irreversible',
+        );
+      }
+
+      const resolution = store.resolveRole(args.role);
+      const errResp = roleResolutionError(resolution);
+      if (errResp) return errResp;
+      const role = (resolution as Extract<RoleResolution, { canonical: string }>).canonical;
+
+      if (args.action === 'delete_candidate') {
+        if (!args.candidate_id) {
+          return failure(
+            'validation_error',
+            'candidate_id is required for delete_candidate',
+          );
+        }
+
+        const deletion = store.deleteCandidate(role, args.candidate_id);
+        return success({
+          deleted: true,
+          action: args.action,
+          candidate_id: args.candidate_id,
+          role,
+          ...(deletion.conversation_history_count > 0
+            ? { warning: `Deleted candidate had conversation history (${deletion.conversation_history_count} message(s))` }
+            : {}),
+        });
+      }
+
+      if (args.action === 'delete_role') {
+        store.deleteRole(role);
+        return success({
+          deleted: true,
+          action: args.action,
+          role,
+        });
+      }
+
+      return failure('validation_error', `Unknown action: ${args.action}`);
+    } catch (e) {
+      return handleError(e);
+    }
+  }
+
   return {
     recruitSetup,
     recruitScore,
@@ -1974,6 +2030,7 @@ export function createHandlers(deps: ServerDeps) {
     recruitCompare,
     recruitDecide,
     recruitStatus,
+    recruitCleanup,
   };
 }
 
@@ -2156,6 +2213,20 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
     },
     { readOnlyHint: false, idempotentHint: true },
     async (args) => handlers.recruitStatus(args),
+  );
+
+  // Tool 8: recruit_cleanup
+  server.tool(
+    'recruit_cleanup',
+    'Delete a candidate or role cleanup target. Irreversible. Requires confirm: true.',
+    {
+      action: z.enum(['delete_candidate', 'delete_role']),
+      role: z.string(),
+      candidate_id: z.string().optional(),
+      confirm: z.boolean(),
+    },
+    { destructiveHint: true, idempotentHint: false },
+    async (args) => handlers.recruitCleanup(args),
   );
 
   return server;

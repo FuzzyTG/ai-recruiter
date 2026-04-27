@@ -729,3 +729,256 @@ describe('checkTimeouts with relativeTo', () => {
     expect(overdue).toHaveLength(0);
   });
 });
+
+// ── 22. deleteCandidate ─────────────────────────────────────────────────────
+
+describe('deleteCandidate', () => {
+  function setupCandidateWithData(candidateId = 'C-20260414-001', conversationId = 'conv-C-20260414-001') {
+    const candidate = makeCandidate({ candidate_id: candidateId, conversation_id: conversationId });
+    store.writeCandidate('test-role', candidate);
+    store.writeResumeMarkdown('test-role', candidateId, '# Resume content');
+    store.writeNarrative('test-role', candidateId, 'Narrative notes\n');
+    store.createConversation(conversationId);
+    store.appendMessage(conversationId, {
+      schema_version: 1,
+      message_id: 'msg-001',
+      direction: 'outbound',
+      from: 'hm@test.com',
+      to: ['candidate@test.com'],
+      cc: [],
+      subject: 'Test Subject',
+      body: 'Test body',
+      timestamp: new Date().toISOString(),
+    });
+    return candidate;
+  }
+
+  it('removes candidate JSON file', () => {
+    setupCandidateWithData();
+    store.deleteCandidate('test-role', 'C-20260414-001');
+    expect(() => store.readCandidate('test-role', 'C-20260414-001')).toThrow(CandidateNotFoundError);
+  });
+
+  it('removes resume file', () => {
+    setupCandidateWithData();
+    store.deleteCandidate('test-role', 'C-20260414-001');
+    const resumePath = path.join(tmpDir, 'roles', 'test-role', 'candidates', 'resumes', 'C-20260414-001.md');
+    expect(fs.existsSync(resumePath)).toBe(false);
+  });
+
+  it('removes narrative directory', () => {
+    setupCandidateWithData();
+    store.deleteCandidate('test-role', 'C-20260414-001');
+    const narrativeDir = path.join(tmpDir, 'roles', 'test-role', 'candidates', 'C-20260414-001');
+    expect(fs.existsSync(narrativeDir)).toBe(false);
+  });
+
+  it('removes conversation directory', () => {
+    setupCandidateWithData();
+    store.deleteCandidate('test-role', 'C-20260414-001');
+    const convDir = path.join(tmpDir, 'conversations', 'conv-C-20260414-001');
+    expect(fs.existsSync(convDir)).toBe(false);
+  });
+
+  it('writes an audit entry for the deletion', () => {
+    setupCandidateWithData();
+    store.deleteCandidate('test-role', 'C-20260414-001');
+    const auditPath = path.join(tmpDir, 'audit.jsonl');
+    const lines = fs.readFileSync(auditPath, 'utf-8').trim().split('\n');
+    const deleteEntry = lines.map(l => JSON.parse(l)).find(e => e.action === 'delete_candidate');
+    expect(deleteEntry).toBeDefined();
+    expect(deleteEntry.details.candidate_id).toBe('C-20260414-001');
+    expect(deleteEntry.details.role).toBe('test-role');
+  });
+
+  it('does not remove audit.jsonl', () => {
+    setupCandidateWithData();
+    store.deleteCandidate('test-role', 'C-20260414-001');
+    const auditPath = path.join(tmpDir, 'audit.jsonl');
+    expect(fs.existsSync(auditPath)).toBe(true);
+  });
+
+  it('throws CandidateNotFoundError for unknown candidate', () => {
+    expect(() => store.deleteCandidate('test-role', 'C-20260414-999')).toThrow(CandidateNotFoundError);
+  });
+
+  it('does not affect other candidates', () => {
+    setupCandidateWithData('C-20260414-001', 'conv-001');
+    const other = makeCandidate({ candidate_id: 'C-20260414-002', conversation_id: 'conv-002' });
+    store.writeCandidate('test-role', other);
+
+    store.deleteCandidate('test-role', 'C-20260414-001');
+
+    expect(() => store.readCandidate('test-role', 'C-20260414-002')).not.toThrow();
+  });
+
+  it('does not delete outside conversations directory when candidate conversation_id is corrupted', () => {
+    const outsideDir = path.join(tmpDir, 'outside-target');
+    fs.mkdirSync(outsideDir, { recursive: true });
+    fs.writeFileSync(path.join(outsideDir, 'keep.txt'), 'keep');
+    const candidate = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: '../outside-target',
+    });
+    store.writeCandidate('test-role', candidate);
+
+    store.deleteCandidate('test-role', 'C-20260414-001');
+
+    expect(fs.existsSync(outsideDir)).toBe(true);
+    expect(fs.existsSync(path.join(outsideDir, 'keep.txt'))).toBe(true);
+  });
+
+  it('does not delete outside roles directory when role is path-traversal string', () => {
+    const outsideDir = path.join(tmpDir, 'outside');
+    const outsideCandidatesDir = path.join(outsideDir, 'candidates');
+    fs.mkdirSync(outsideCandidatesDir, { recursive: true });
+    fs.writeFileSync(path.join(outsideCandidatesDir, 'C-20260414-001.json'), JSON.stringify(makeCandidate()));
+    fs.writeFileSync(path.join(outsideDir, 'keep.txt'), 'keep');
+
+    expect(() => store.deleteCandidate('../outside', 'C-20260414-001')).toThrow(/traversal|invalid|outside/i);
+
+    expect(fs.existsSync(outsideDir)).toBe(true);
+    expect(fs.existsSync(path.join(outsideDir, 'keep.txt'))).toBe(true);
+    expect(fs.existsSync(path.join(outsideCandidatesDir, 'C-20260414-001.json'))).toBe(true);
+  });
+});
+
+// ── 23. deleteRole ──────────────────────────────────────────────────────────
+
+describe('deleteRole', () => {
+  function setupRoleWithData() {
+    store.writeConfig(makeConfig());
+    store.writeFramework('test-role', makeFramework());
+    store.writeJd('test-role', 'Job description content');
+    const candidate = makeCandidate({ candidate_id: 'C-20260414-001', conversation_id: 'conv-001' });
+    store.writeCandidate('test-role', candidate);
+    store.writeResumeMarkdown('test-role', 'C-20260414-001', '# Resume');
+    store.createConversation('conv-001');
+  }
+
+  it('removes the role directory', () => {
+    setupRoleWithData();
+    store.deleteRole('test-role');
+    const roleDir = path.join(tmpDir, 'roles', 'test-role');
+    expect(fs.existsSync(roleDir)).toBe(false);
+  });
+
+  it('role no longer appears in listRoles', () => {
+    setupRoleWithData();
+    store.deleteRole('test-role');
+    expect(store.listRoles()).not.toContain('test-role');
+  });
+
+  it('does not remove global config', () => {
+    setupRoleWithData();
+    store.deleteRole('test-role');
+    expect(store.configExists()).toBe(true);
+  });
+
+  it('does not remove audit.jsonl', () => {
+    setupRoleWithData();
+    store.deleteRole('test-role');
+    const auditPath = path.join(tmpDir, 'audit.jsonl');
+    expect(fs.existsSync(auditPath)).toBe(true);
+  });
+
+  it('writes an audit entry for the deletion', () => {
+    setupRoleWithData();
+    store.deleteRole('test-role');
+    const auditPath = path.join(tmpDir, 'audit.jsonl');
+    const lines = fs.readFileSync(auditPath, 'utf-8').trim().split('\n');
+    const deleteEntry = lines.map(l => JSON.parse(l)).find(e => e.action === 'delete_role');
+    expect(deleteEntry).toBeDefined();
+    expect(deleteEntry.details.role).toBe('test-role');
+  });
+
+  it('does not remove other roles', () => {
+    setupRoleWithData();
+    store.writeFramework('other-role', makeFramework());
+    store.deleteRole('test-role');
+    expect(store.listRoles()).toContain('other-role');
+  });
+
+  it('throws RoleNotFoundError for unknown role', () => {
+    expect(() => store.deleteRole('nonexistent-role')).toThrow(RoleNotFoundError);
+  });
+
+  it('does not delete outside roles directory when role is path-traversal string', () => {
+    // Create a directory outside roles/ that must not be deleted
+    const outsideDir = path.join(tmpDir, 'outside-target');
+    fs.mkdirSync(outsideDir, { recursive: true });
+    fs.writeFileSync(path.join(outsideDir, 'keep.txt'), 'keep');
+
+    // deleteRole with a traversal input must throw a validation error, not delete outside roles/
+    expect(() => store.deleteRole('../outside-target')).toThrow(/traversal|invalid|outside/i);
+
+    // The outside directory must still exist
+    expect(fs.existsSync(outsideDir)).toBe(true);
+    expect(fs.existsSync(path.join(outsideDir, 'keep.txt'))).toBe(true);
+  });
+
+  it('rejects nested role paths inside roles directory', () => {
+    const nestedRoleDir = path.join(tmpDir, 'roles', 'nested', 'role');
+    fs.mkdirSync(nestedRoleDir, { recursive: true });
+    fs.writeFileSync(path.join(nestedRoleDir, 'framework.json'), JSON.stringify(makeFramework()));
+
+    expect(() => store.deleteRole('nested/role')).toThrow(/invalid.*role/i);
+    expect(fs.existsSync(nestedRoleDir)).toBe(true);
+  });
+
+  it('does not remove credentials file', () => {
+    setupRoleWithData();
+    store.writeCredential('agentmail_api_key', 'test-key');
+    store.deleteRole('test-role');
+    const creds = store.readCredentials();
+    expect(creds.agentmail_api_key).toBe('test-key');
+  });
+
+  it('does not remove global conversation directories for candidates in the role', () => {
+    setupRoleWithData();
+    store.deleteRole('test-role');
+    const convDir = path.join(tmpDir, 'conversations', 'conv-001');
+    expect(fs.existsSync(convDir)).toBe(true);
+  });
+
+  it('does not remove global conversation directories for multiple candidates in the role', () => {
+    setupRoleWithData();
+    const c2 = makeCandidate({ candidate_id: 'C-20260414-002', conversation_id: 'conv-002' });
+    store.writeCandidate('test-role', c2);
+    store.createConversation('conv-002');
+
+    store.deleteRole('test-role');
+
+    expect(fs.existsSync(path.join(tmpDir, 'conversations', 'conv-001'))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, 'conversations', 'conv-002'))).toBe(true);
+  });
+});
+
+// ── 24. candidate_id format validation ──────────────────────────────────────
+
+describe('candidate_id format validation', () => {
+  const INVALID_IDS = ['../../etc/passwd', '../config', 'bad/id', 'C-bad', '', 'c-20260414-001'];
+
+  for (const badId of INVALID_IDS) {
+    it(`readCandidate rejects invalid candidate_id: ${JSON.stringify(badId)}`, () => {
+      expect(() => store.readCandidate('test-role', badId)).toThrow(/invalid.*candidate/i);
+    });
+
+    it(`writeCandidate rejects invalid candidate_id: ${JSON.stringify(badId)}`, () => {
+      const candidate = makeCandidate({ candidate_id: badId });
+      expect(() => store.writeCandidate('test-role', candidate)).toThrow(/invalid.*candidate/i);
+    });
+
+    it(`deleteCandidate rejects invalid candidate_id: ${JSON.stringify(badId)}`, () => {
+      expect(() => store.deleteCandidate('test-role', badId)).toThrow(/invalid.*candidate/i);
+    });
+  }
+
+  it('readCandidate accepts valid candidate_id format C-YYYYMMDD-NNN', () => {
+    store.writeConfig(makeConfig());
+    store.writeFramework('test-role', makeFramework());
+    const candidate = makeCandidate({ candidate_id: 'C-20260414-001' });
+    store.writeCandidate('test-role', candidate);
+    expect(() => store.readCandidate('test-role', 'C-20260414-001')).not.toThrow();
+  });
+});

@@ -1687,10 +1687,12 @@ describe('cross-cutting error handling', () => {
   });
 
   it('unknown errors produce structured error response', async () => {
-    // Create handlers with a store that throws an unexpected error
+    // Create handlers with a store that throws an unexpected error from readFramework.
+    // We must first write a framework so that resolveRole() succeeds (returns 'exact'),
+    // then override readFramework to throw the unexpected error.
     const brokenStore = new RecruiterStore(tmpDir);
     brokenStore.writeConfig(makeConfig());
-    const origReadFramework = brokenStore.readFramework.bind(brokenStore);
+    brokenStore.writeFramework('test-role', makeFramework('test-role'));
     brokenStore.readFramework = () => {
       throw new Error('Unexpected disk failure');
     };
@@ -3653,9 +3655,9 @@ describe('executeTimeouts — evaluating revised', () => {
       state: CandidateState.Evaluating,
       state_updated: new Date(Date.now() - 74 * 60 * 60 * 1000).toISOString(),
       timeline: [{
-        timestamp: new Date(Date.now() - 60 * 60 * 60 * 1000).toISOString(),
+        timestamp: new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString(),
         event: 'evaluation_note',
-        details: { note: 'Old note' },
+        details: { note: 'Old review activity' },
       }],
     });
     store.writeCandidate('test-role', candidate);
@@ -3673,5 +3675,144 @@ describe('executeTimeouts — evaluating revised', () => {
     );
     expect(notify).toBeDefined();
     expect(notify.executed).toBe(true);
+  });
+});
+
+// =========================================================================
+// recruit_cleanup
+// =========================================================================
+
+describe('recruit_cleanup', () => {
+  async function setupCandidateForCleanup() {
+    await setupRole(store);
+    const candidate = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+    });
+    store.writeCandidate('test-role', candidate);
+    store.writeResumeMarkdown('test-role', 'C-20260414-001', '# Resume');
+    store.writeNarrative('test-role', 'C-20260414-001', 'Notes\n');
+    store.createConversation('conv-C-20260414-001');
+    store.appendMessage('conv-C-20260414-001', {
+      schema_version: 1,
+      message_id: 'msg-001',
+      direction: 'outbound' as const,
+      from: 'hm@test.com',
+      to: ['candidate@test.com'],
+      cc: [],
+      subject: 'Test',
+      body: 'Body',
+      timestamp: new Date().toISOString(),
+    });
+    return candidate;
+  }
+
+  async function setupRoleForCleanup() {
+    await setupRole(store);
+    store.writeJd('test-role', 'JD content');
+    const candidate = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+    });
+    store.writeCandidate('test-role', candidate);
+    store.createConversation('conv-C-20260414-001');
+  }
+
+  it('returns approval_required when confirm is false', async () => {
+    await setupCandidateForCleanup();
+    const result = await handlers.recruitCleanup({
+      action: 'delete_candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-001',
+      confirm: false,
+    });
+    const parsed = parseResult(result);
+    expect(result.isError).toBe(true);
+    expect(parsed.error).toBe('approval_required');
+  });
+
+  it('deletes candidate data for delete_candidate when confirm is true', async () => {
+    await setupCandidateForCleanup();
+    const result = await handlers.recruitCleanup({
+      action: 'delete_candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-001',
+      confirm: true,
+    });
+    const parsed = parseResult(result);
+    expect(result.isError).toBeFalsy();
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.deleted).toBe(true);
+    expect(parsed.data.action).toBe('delete_candidate');
+    expect(parsed.data.candidate_id).toBe('C-20260414-001');
+    expect(() => store.readCandidate('test-role', 'C-20260414-001')).toThrow();
+    expect(fs.existsSync(path.join(tmpDir, 'conversations', 'conv-C-20260414-001'))).toBe(false);
+  });
+
+  it('returns a warning when deleting a candidate with communication history', async () => {
+    await setupCandidateForCleanup();
+    const result = await handlers.recruitCleanup({
+      action: 'delete_candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-001',
+      confirm: true,
+    });
+    const parsed = parseResult(result);
+    expect(parsed.data.warning).toMatch(/conversation history/i);
+  });
+
+  it('fails safely when delete_candidate omits candidate_id and does not delete the role', async () => {
+    await setupCandidateForCleanup();
+    const result = await handlers.recruitCleanup({
+      action: 'delete_candidate',
+      role: 'test-role',
+      confirm: true,
+    });
+    const parsed = parseResult(result);
+    expect(result.isError).toBe(true);
+    expect(parsed.error).toBe('validation_error');
+    expect(store.listRoles()).toContain('test-role');
+  });
+
+  it('returns candidate_not_found for unknown candidate', async () => {
+    await setupRole(store);
+    const result = await handlers.recruitCleanup({
+      action: 'delete_candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-999',
+      confirm: true,
+    });
+    const parsed = parseResult(result);
+    expect(result.isError).toBe(true);
+    expect(parsed.error).toBe('candidate_not_found');
+  });
+
+  it('deletes role directory only for explicit delete_role action', async () => {
+    await setupRoleForCleanup();
+    const result = await handlers.recruitCleanup({
+      action: 'delete_role',
+      role: 'test-role',
+      confirm: true,
+    });
+    const parsed = parseResult(result);
+    expect(result.isError).toBeFalsy();
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.deleted).toBe(true);
+    expect(parsed.data.action).toBe('delete_role');
+    expect(store.listRoles()).not.toContain('test-role');
+    expect(store.configExists()).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, 'conversations', 'conv-C-20260414-001'))).toBe(true);
+  });
+
+  it('returns role_not_found for unknown role', async () => {
+    store.writeConfig(makeConfig());
+    const result = await handlers.recruitCleanup({
+      action: 'delete_role',
+      role: 'nonexistent-role',
+      confirm: true,
+    });
+    const parsed = parseResult(result);
+    expect(result.isError).toBe(true);
+    expect(parsed.error).toBe('role_not_found');
   });
 });
