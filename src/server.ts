@@ -10,7 +10,7 @@ import {
   ApprovalRequiredError,
   type RoleResolution,
 } from './store.js';
-import { RecruiterMailClient, EmailSendError, type InboundMessage } from './emailClient.js';
+import { RecruiterMailClient, EmailSendError } from './emailClient.js';
 import * as calendar from './calendar.js';
 import { CalendarFetchError } from './calendar.js';
 import * as validators from './validators.js';
@@ -25,6 +25,14 @@ import type {
   ResearchCard,
   TimeoutRule,
 } from './models.js';
+import {
+  activeCandidateMatches,
+  candidateEmailCounts,
+  emptyInboxSyncResult,
+  terminalThreadIds,
+  trySyncInboxForMatches,
+  type InboxSyncResult,
+} from './inboxSync.js';
 import { validateResearchCards } from './researchCards.js';
 import {
   appendSignature,
@@ -1357,225 +1365,6 @@ export function createHandlers(deps: ServerDeps) {
     }
   }
 
-  // ── Tool 7: recruit_status ────────────────────────────────────────────
-
-  type CandidateMatch = {
-    role: string;
-    candidate_id: string;
-    conversation_id: string;
-    name: string;
-  };
-
-  type InboxSyncResult = {
-    synced: number;
-    unmatched: number;
-    new_messages: Array<{
-      candidate_id: string;
-      name: string;
-      subject: string;
-      preview: string;
-      from: string;
-      received_at: string;
-    }>;
-    unmatched_messages: Array<{
-      from: string;
-      subject: string;
-      received_at: string;
-    }>;
-    warning?: string;
-  };
-
-  function activeCandidateMatches(roles: string[], candidateId?: string): CandidateMatch[] {
-    const matches: CandidateMatch[] = [];
-
-    for (const role of roles) {
-      const candidates = candidateId
-        ? [store.readCandidate(role, candidateId)]
-        : store.listCandidates(role);
-
-      for (const c of candidates) {
-        if (isTerminalState(c.state)) continue;
-        matches.push({
-          role: c.role,
-          candidate_id: c.candidate_id,
-          conversation_id: c.conversation_id,
-          name: c.name,
-        });
-      }
-    }
-
-    return matches;
-  }
-
-  function terminalThreadIds(roles: string[]): Set<string> {
-    const threadIds = new Set<string>();
-
-    for (const role of roles) {
-      for (const c of store.listCandidates(role)) {
-        if (!isTerminalState(c.state)) continue;
-        for (const msg of store.readConversation(c.conversation_id)) {
-          if (msg.agentmail_thread_id) {
-            threadIds.add(msg.agentmail_thread_id);
-          }
-        }
-      }
-    }
-
-    return threadIds;
-  }
-
-  function candidateEmailCounts(roles: string[]): Map<string, number> {
-    const counts = new Map<string, number>();
-
-    for (const role of roles) {
-      for (const c of store.listCandidates(role)) {
-        const email = c.channels.email.toLowerCase();
-        counts.set(email, (counts.get(email) ?? 0) + 1);
-      }
-    }
-
-    return counts;
-  }
-
-  type InboxSyncOptions = {
-    terminalThreadIds?: Set<string>;
-    fallbackEmailCounts?: Map<string, number>;
-    includeUnmatched?: boolean;
-  };
-
-  async function syncInboxForMatches(
-    matches: CandidateMatch[],
-    options: InboxSyncOptions = {},
-  ): Promise<InboxSyncResult> {
-    if (!getEmailClient()) {
-      return {
-        synced: 0,
-        unmatched: 0,
-        new_messages: [],
-        unmatched_messages: [],
-        warning: 'Email client not configured. Inbox sync skipped.',
-      };
-    }
-
-    if (matches.length === 0) {
-      return {
-        synced: 0,
-        unmatched: 0,
-        new_messages: [],
-        unmatched_messages: [],
-      };
-    }
-
-    const threadMap = new Map<string, CandidateMatch>();
-    const candidateMap = new Map<string, CandidateMatch[]>();
-    const knownMessageIds = new Set<string>();
-
-    for (const entry of matches) {
-      const candidate = store.readCandidate(entry.role, entry.candidate_id);
-      const email = candidate.channels.email.toLowerCase();
-      const existing = candidateMap.get(email) ?? [];
-      existing.push(entry);
-      candidateMap.set(email, existing);
-
-      const messages = store.readConversation(entry.conversation_id);
-      for (const msg of messages) {
-        knownMessageIds.add(msg.message_id);
-        if (msg.agentmail_thread_id) {
-          threadMap.set(msg.agentmail_thread_id, entry);
-        }
-      }
-    }
-
-    const allInbound: InboundMessage[] = [];
-    let cursor: string | undefined;
-    const MAX_PAGES = 4;
-    const PAGE_SIZE = 50;
-
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const result = await getEmailClient()!.listMessages({
-        limit: PAGE_SIZE,
-        after: cursor,
-      });
-      allInbound.push(...result.messages);
-      cursor = result.nextCursor;
-      if (!cursor) break;
-    }
-
-    const newMessages: InboxSyncResult['new_messages'] = [];
-    const unmatchedMessages: InboxSyncResult['unmatched_messages'] = [];
-
-    for (const msg of allInbound) {
-      if (knownMessageIds.has(msg.messageId)) continue;
-      if (msg.threadId && options.terminalThreadIds?.has(msg.threadId)) continue;
-
-      let match: CandidateMatch | null = null;
-      if (msg.threadId) {
-        match = threadMap.get(msg.threadId) ?? null;
-      } else {
-        const email = parseEmailAddress(msg.from);
-        const candidates = candidateMap.get(email) ?? [];
-        const emailCount = options.fallbackEmailCounts?.get(email) ?? candidates.length;
-        match = candidates.length === 1 && emailCount === 1 ? candidates[0] : null;
-      }
-
-      if (match) {
-        const convMsg: ConversationMessage = {
-          schema_version: 1,
-          message_id: msg.messageId,
-          direction: 'inbound',
-          from: msg.from,
-          to: msg.to,
-          cc: msg.cc,
-          subject: msg.subject,
-          body: msg.text,
-          timestamp: msg.receivedAt,
-          agentmail_thread_id: msg.threadId,
-        };
-        store.appendMessage(match.conversation_id, convMsg);
-        knownMessageIds.add(msg.messageId);
-
-        newMessages.push({
-          candidate_id: match.candidate_id,
-          name: match.name,
-          subject: msg.subject,
-          preview: msg.text.slice(0, 200),
-          from: msg.from,
-          received_at: msg.receivedAt,
-        });
-      } else if (options.includeUnmatched) {
-        unmatchedMessages.push({
-          from: msg.from,
-          subject: msg.subject,
-          received_at: msg.receivedAt,
-        });
-      }
-    }
-
-    return {
-      synced: newMessages.length,
-      unmatched: unmatchedMessages.length,
-      new_messages: newMessages,
-      unmatched_messages: unmatchedMessages,
-    };
-  }
-
-  async function trySyncInboxForMatches(
-    matches: CandidateMatch[],
-    options?: InboxSyncOptions,
-  ): Promise<InboxSyncResult> {
-    try {
-      return await syncInboxForMatches(matches, options);
-    } catch (e) {
-      return {
-        synced: 0,
-        unmatched: 0,
-        new_messages: [],
-        unmatched_messages: [],
-        warning: e instanceof Error ? e.message : String(e),
-      };
-    }
-  }
-
   async function recruitSaveResearchCards(args: {
     role: string;
     candidate_id: string;
@@ -1611,22 +1400,16 @@ export function createHandlers(deps: ServerDeps) {
   }): Promise<ToolResult> {
     try {
       const shouldSyncInbox = args.sync_inbox !== false;
-      const noSyncResult: InboxSyncResult = {
-        synced: 0,
-        unmatched: 0,
-        new_messages: [],
-        unmatched_messages: [],
-      };
 
       switch (args.query_type) {
         case 'overview': {
           const roles = args.role ? [args.role] : store.listRoles();
           const inboxSync = shouldSyncInbox
-            ? await trySyncInboxForMatches(activeCandidateMatches(roles), {
-              terminalThreadIds: terminalThreadIds(roles),
-              fallbackEmailCounts: candidateEmailCounts(roles),
+            ? await trySyncInboxForMatches(store, getEmailClient(), activeCandidateMatches(store, roles), {
+              terminalThreadIds: terminalThreadIds(store, roles),
+              fallbackEmailCounts: candidateEmailCounts(store, roles),
             })
-            : noSyncResult;
+            : emptyInboxSyncResult();
           const overview: Record<string, Record<string, Array<{ candidate_id: string; name: string; overall_score: number | null }>>> = {};
 
           for (const role of roles) {
@@ -1661,15 +1444,17 @@ export function createHandlers(deps: ServerDeps) {
           const preSyncCandidate = store.readCandidate(args.role, args.candidate_id);
           const inboxSync = shouldSyncInbox
             ? await trySyncInboxForMatches(
+              store,
+              getEmailClient(),
               isTerminalState(preSyncCandidate.state)
                 ? []
-                : activeCandidateMatches([args.role], args.candidate_id),
+                : activeCandidateMatches(store, [args.role], args.candidate_id),
               {
-                terminalThreadIds: terminalThreadIds([args.role]),
-                fallbackEmailCounts: candidateEmailCounts([args.role]),
+                terminalThreadIds: terminalThreadIds(store, [args.role]),
+                fallbackEmailCounts: candidateEmailCounts(store, [args.role]),
               },
             )
-            : noSyncResult;
+            : emptyInboxSyncResult();
           const candidate = store.readCandidate(args.role, args.candidate_id);
           const conversation = store.readConversation(candidate.conversation_id);
           const recentMessages = conversation.slice(-5);
@@ -1688,11 +1473,11 @@ export function createHandlers(deps: ServerDeps) {
         case 'timeouts': {
           const roles = args.role ? [args.role] : store.listRoles();
           const inboxSync = shouldSyncInbox
-            ? await trySyncInboxForMatches(activeCandidateMatches(roles), {
-              terminalThreadIds: terminalThreadIds(roles),
-              fallbackEmailCounts: candidateEmailCounts(roles),
+            ? await trySyncInboxForMatches(store, getEmailClient(), activeCandidateMatches(store, roles), {
+              terminalThreadIds: terminalThreadIds(store, roles),
+              fallbackEmailCounts: candidateEmailCounts(store, roles),
             })
-            : noSyncResult;
+            : emptyInboxSyncResult();
           let timeouts;
           if (args.role) {
             const roleTimeouts = store.checkTimeouts(args.role);
@@ -1727,9 +1512,9 @@ export function createHandlers(deps: ServerDeps) {
 
         case 'inbox': {
           const roles = args.role ? [args.role] : store.listRoles();
-          const inboxSync = await trySyncInboxForMatches(activeCandidateMatches(roles), {
-            terminalThreadIds: terminalThreadIds(roles),
-            fallbackEmailCounts: candidateEmailCounts(roles),
+          const inboxSync = await trySyncInboxForMatches(store, getEmailClient(), activeCandidateMatches(store, roles), {
+            terminalThreadIds: terminalThreadIds(store, roles),
+            fallbackEmailCounts: candidateEmailCounts(store, roles),
             includeUnmatched: true,
           });
 
