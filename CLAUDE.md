@@ -1,5 +1,9 @@
 # AI Recruiter — Project Instructions
 
+## Memory Recall
+- **Session start**: At the beginning of every session, run `memex read index` and scan for cards relevant to the current task. Read 2-3 most relevant cards before starting work.
+- **Before debugging**: When diagnosing an issue, search memex for related patterns before tracing code from scratch.
+
 ## Before Pushing
 - **Always bump the patch version** in `.claude-plugin/plugin.json` before every `git push` (e.g. 0.1.1 → 0.1.2). Without this, the Claude Code plugin update mechanism won't detect changes.
 
