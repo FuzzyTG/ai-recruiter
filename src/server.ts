@@ -42,7 +42,6 @@ import {
 import * as crypto from 'node:crypto';
 import { executeTimeouts, type TimeoutExecutionResult } from './timeoutEngine.js';
 
-
 function success(data: Record<string, unknown>) {
   return {
     content: [
