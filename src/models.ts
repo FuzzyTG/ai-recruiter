@@ -205,6 +205,43 @@ export interface ConfirmedInterview {
   end: string;    // ISO 8601
 }
 
+export interface ResearchSource {
+  title: string;
+  url: string;
+}
+
+export interface ResearchFact {
+  fact: string;
+  sources: ResearchSource[];
+}
+
+export interface ResearchInference {
+  inference: string;
+  confidence: 'low' | 'medium' | 'high';
+}
+
+export type ResearchClaimType =
+  | 'project'
+  | 'public_profile'
+  | 'writing'
+  | 'talk'
+  | 'publication'
+  | 'company_context'
+  | 'other';
+
+export interface ResearchCard {
+  claim: string;
+  claim_type: ResearchClaimType;
+  priority_reason: string;
+  source_backed_facts: ResearchFact[];
+  inferences: ResearchInference[];
+  unknowns: string[];
+  attribution_limits: string[];
+  matching_relevance: string;
+  follow_up_probes: string[];
+  use_in_scoring: 'context_only';
+}
+
 export interface Candidate {
   schema_version: number;
   candidate_id: string; // C-YYYYMMDD-NNN

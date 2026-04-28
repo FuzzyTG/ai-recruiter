@@ -37,7 +37,7 @@ Use overview data to match the HM's input:
 
 If `role_not_found` or `candidate_not_found` is returned, show a short friendly error and do not generate prep.
 
-Use candidate details, scores, evaluations, timeline, pending action, and recent conversation history from the `recruit_status` candidate detail response. Use role or framework context only if it is present in the status output or already available from overview/setup context. If role, JD, framework, resume/CV markdown, or notes are unavailable, state the limitation briefly and avoid inventing details.
+Use candidate details, scores, evaluations, timeline, pending action, recent conversation history, and saved `research_cards` from the `recruit_status` candidate detail response. Do not run live web/profile research during prep. Use research cards only as context for sharper probes, preserving their fact / inference / unknown / confidence / source separation. Use role or framework context only if it is present in the status output or already available from overview/setup context. If role, JD, framework, resume/CV markdown, research cards, or notes are unavailable, state the limitation briefly and avoid inventing details.
 
 ### Step 3: Generate Interview Prep Guide
 
@@ -50,7 +50,8 @@ Use candidate details, scores, evaluations, timeline, pending action, and recent
 5. Candidate-specific interview questions
 6. Follow-up questions based on resume claims
 7. Evaluation reminders tied to the framework
-8. Suggested interviewer focus
+8. Research-card-informed probes
+9. Suggested interviewer focus
 
 Ground recommendations in the candidate's stored data. If a data source is missing, state that briefly and avoid inventing details. Where useful, note unavailable sources inline, such as "No interview evaluation recorded yet" or "Resume text unavailable; questions are based on score evidence and conversation history."
 
@@ -82,7 +83,10 @@ Role: <role>
 7. Evaluation reminders tied to the framework
 ...
 
-8. Suggested interviewer focus
+8. Research-card-informed probes
+...
+
+9. Suggested interviewer focus
 ...
 ```
 
@@ -96,4 +100,6 @@ End with the relevant next-action suggestion, such as `/recruit-evaluate` after 
 | Writing prep files | Prep is optional generated assistance | Return the guide directly in chat |
 | Generating role-level generic guides | Issue scope is one candidate in one role | Resolve and use a specific `candidate_id` |
 | Inventing resume details | Misleads interviewers | State missing context and ask candidate-specific questions from available data |
+| Running live research during prep | Prep must be read-only and use saved cards only | Suggest `/recruit-research` before prep if more context is needed |
+| Blending facts and inferences from research cards | Makes source confidence unclear | Preserve fact / inference / unknown / confidence / source separation |
 | Changing candidate state | Prep is not a pipeline step | Suggest follow-up commands only |

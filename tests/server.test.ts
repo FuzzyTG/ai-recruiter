@@ -1075,6 +1075,290 @@ describe('recruit_decide', () => {
 });
 
 // =========================================================================
+// recruit_save_research_cards
+// =========================================================================
+
+describe('recruit_save_research_cards', () => {
+  beforeEach(async () => {
+    await setupRole(store);
+  });
+
+  it('saves approved research cards without changing candidate pipeline state or scores', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+      state: CandidateState.ScreenedPass,
+      pending_action: 'Schedule interview',
+      scores: { overall: 0.8, dimensions: {} },
+      timeline: [
+        {
+          timestamp: '2026-04-14T10:00:00Z',
+          event: 'new → screening',
+        },
+      ],
+    });
+    store.writeCandidate('test-role', c);
+
+    const result = await handlers.recruitSaveResearchCards({
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      approved: true,
+      cards: [
+        {
+          claim: 'Public conference talk on distributed TypeScript systems',
+          claim_type: 'public_profile',
+          priority_reason: 'Directly relevant to role scope and seniority.',
+          source_backed_facts: [
+            {
+              fact: 'Conference agenda lists a TypeScript systems talk under the candidate name.',
+              sources: [
+                {
+                  title: 'Conference agenda',
+                  url: 'https://example.com/agenda',
+                },
+              ],
+            },
+          ],
+          inferences: [
+            {
+              inference: 'May be comfortable explaining complex technical tradeoffs.',
+              confidence: 'low',
+            },
+          ],
+          unknowns: ['Whether they authored the architecture discussed in the talk.'],
+          attribution_limits: ['Name match only; verify identity in interview.'],
+          matching_relevance: 'Useful context for systems design interview probes.',
+          follow_up_probes: ['Ask what part of the system they personally designed.'],
+          use_in_scoring: 'context_only',
+        },
+      ],
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.saved).toBe(1);
+
+    const candidateAfter = store.readCandidate('test-role', 'C-20260414-010');
+    expect(candidateAfter.state).toBe(CandidateState.ScreenedPass);
+    expect(candidateAfter.pending_action).toBe('Schedule interview');
+    expect(candidateAfter.scores).toEqual({ overall: 0.8, dimensions: {} });
+    expect(candidateAfter.timeline).toHaveLength(1);
+  });
+
+  it('rejects unapproved research cards', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+    });
+    store.writeCandidate('test-role', c);
+
+    const result = await handlers.recruitSaveResearchCards({
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      approved: false,
+      cards: [
+        {
+          claim: 'Unapproved claim',
+          claim_type: 'project',
+          priority_reason: 'Not approved by HM.',
+          source_backed_facts: [],
+          inferences: [],
+          unknowns: [],
+          attribution_limits: [],
+          matching_relevance: 'None',
+          follow_up_probes: [],
+          use_in_scoring: 'context_only',
+        },
+      ],
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('approval_required');
+  });
+
+  it('rejects saving more than five research cards', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+    });
+    store.writeCandidate('test-role', c);
+
+    const cards = Array.from({ length: 6 }, (_, i) => ({
+      claim: `Claim ${i + 1}`,
+      claim_type: 'project',
+      priority_reason: 'High-signal claim.',
+      source_backed_facts: [
+        {
+          fact: 'Public source supports the claim.',
+          sources: [{ title: 'Source', url: 'https://example.com/source' }],
+        },
+      ],
+      inferences: [],
+      unknowns: [],
+      attribution_limits: [],
+      matching_relevance: 'Relevant to interview prep.',
+      follow_up_probes: [],
+      use_in_scoring: 'context_only' as const,
+    }));
+
+    const result = await handlers.recruitSaveResearchCards({
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      approved: true,
+      cards,
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('validation_error');
+    expect(parsed.message).toContain('1 to 5');
+  });
+
+  it('rejects approved research cards with no source-backed facts', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+    });
+    store.writeCandidate('test-role', c);
+
+    const result = await handlers.recruitSaveResearchCards({
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      approved: true,
+      cards: [
+        {
+          claim: 'Unsourced claim',
+          claim_type: 'project',
+          priority_reason: 'Needs public evidence.',
+          source_backed_facts: [],
+          inferences: [],
+          unknowns: [],
+          attribution_limits: [],
+          matching_relevance: 'Relevant to interview prep.',
+          follow_up_probes: [],
+          use_in_scoring: 'context_only',
+        },
+      ],
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('validation_error');
+    expect(parsed.message).toContain('source_backed_facts');
+  });
+
+  it('rejects approved research cards with a fact but empty sources', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+    });
+    store.writeCandidate('test-role', c);
+
+    const result = await handlers.recruitSaveResearchCards({
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      approved: true,
+      cards: [
+        {
+          claim: 'Claim with source-free fact',
+          claim_type: 'project',
+          priority_reason: 'Needs public evidence.',
+          source_backed_facts: [{ fact: 'A public source supports this.', sources: [] }],
+          inferences: [],
+          unknowns: [],
+          attribution_limits: [],
+          matching_relevance: 'Relevant to interview prep.',
+          follow_up_probes: [],
+          use_in_scoring: 'context_only',
+        },
+      ],
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('validation_error');
+    expect(parsed.message).toContain('sources');
+  });
+
+  it('rejects approved research cards with malformed source URLs', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+    });
+    store.writeCandidate('test-role', c);
+
+    const result = await handlers.recruitSaveResearchCards({
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      approved: true,
+      cards: [
+        {
+          claim: 'Claim with malformed URL',
+          claim_type: 'project',
+          priority_reason: 'Needs public evidence.',
+          source_backed_facts: [
+            {
+              fact: 'A public source supports this.',
+              sources: [{ title: 'Source', url: 'not a url' }],
+            },
+          ],
+          inferences: [],
+          unknowns: [],
+          attribution_limits: [],
+          matching_relevance: 'Relevant to interview prep.',
+          follow_up_probes: [],
+          use_in_scoring: 'context_only',
+        },
+      ],
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('validation_error');
+    expect(parsed.message).toContain('valid URL');
+  });
+
+  it('rejects approved research cards with invalid claim_type', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+    });
+    store.writeCandidate('test-role', c);
+
+    const result = await handlers.recruitSaveResearchCards({
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      approved: true,
+      cards: [
+        {
+          claim: 'Claim with invalid type',
+          claim_type: 'private_life',
+          priority_reason: 'Invalid type should not be persisted.',
+          source_backed_facts: [
+            {
+              fact: 'A public source supports this.',
+              sources: [{ title: 'Source', url: 'https://example.com/source' }],
+            },
+          ],
+          inferences: [],
+          unknowns: [],
+          attribution_limits: [],
+          matching_relevance: 'Relevant to interview prep.',
+          follow_up_probes: [],
+          use_in_scoring: 'context_only',
+        },
+      ],
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('validation_error');
+    expect(parsed.message).toContain('claim_type');
+  });
+});
+
+// =========================================================================
 // recruit_status
 // =========================================================================
 
@@ -1127,6 +1411,69 @@ describe('recruit_status', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.data.candidate.candidate_id).toBe('C-20260414-010');
     expect(parsed.data.recent_messages).toBeDefined();
+  });
+
+  it('candidate: returns saved research cards', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+    });
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-010');
+
+    await handlers.recruitSaveResearchCards({
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      approved: true,
+      cards: [
+        {
+          claim: 'Maintains a public TypeScript library relevant to the role',
+          claim_type: 'project',
+          priority_reason: 'High signal for hands-on TypeScript API design.',
+          source_backed_facts: [
+            {
+              fact: 'Repository README describes a TypeScript SDK maintained by the candidate.',
+              sources: [
+                {
+                  title: 'Public repository README',
+                  url: 'https://example.com/repo',
+                },
+              ],
+            },
+          ],
+          inferences: [
+            {
+              inference: 'Likely has experience maintaining developer-facing APIs.',
+              confidence: 'medium',
+            },
+          ],
+          unknowns: ['Whether the candidate was the primary maintainer is not confirmed.'],
+          attribution_limits: ['Public profile name matches resume name, but identity is not independently verified.'],
+          matching_relevance: 'Maps to the API design dimension.',
+          follow_up_probes: ['Ask which SDK design tradeoffs they personally owned.'],
+          use_in_scoring: 'context_only',
+        },
+      ],
+    });
+
+    const result = await handlers.recruitStatus({
+      query_type: 'candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      sync_inbox: false,
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.research_cards).toHaveLength(1);
+    expect(parsed.data.research_cards[0]).toMatchObject({
+      claim: 'Maintains a public TypeScript library relevant to the role',
+      claim_type: 'project',
+      use_in_scoring: 'context_only',
+    });
+    expect(parsed.data.research_cards[0].source_backed_facts[0].sources[0].url).toBe('https://example.com/repo');
+    expect(parsed.data.research_cards[0].inferences[0].confidence).toBe('medium');
+    expect(parsed.data.research_cards[0].unknowns[0]).toContain('primary maintainer');
   });
 
   it('candidate: syncs only the requested active candidate before returning detail', async () => {
@@ -4280,6 +4627,25 @@ describe('recruit_cleanup', () => {
 
   it('deletes candidate data for delete_candidate when confirm is true', async () => {
     await setupCandidateForCleanup();
+    store.writeResearchCards('test-role', 'C-20260414-001', [
+      {
+        claim: 'Public project claim',
+        claim_type: 'project',
+        priority_reason: 'Relevant public project.',
+        source_backed_facts: [
+          {
+            fact: 'Public source supports the claim.',
+            sources: [{ title: 'Source', url: 'https://example.com/source' }],
+          },
+        ],
+        inferences: [],
+        unknowns: [],
+        attribution_limits: [],
+        matching_relevance: 'Relevant to interview prep.',
+        follow_up_probes: [],
+        use_in_scoring: 'context_only',
+      },
+    ]);
     const result = await handlers.recruitCleanup({
       action: 'delete_candidate',
       role: 'test-role',
@@ -4293,6 +4659,7 @@ describe('recruit_cleanup', () => {
     expect(parsed.data.action).toBe('delete_candidate');
     expect(parsed.data.candidate_id).toBe('C-20260414-001');
     expect(() => store.readCandidate('test-role', 'C-20260414-001')).toThrow();
+    expect(store.readResearchCards('test-role', 'C-20260414-001')).toEqual([]);
     expect(fs.existsSync(path.join(tmpDir, 'conversations', 'conv-C-20260414-001'))).toBe(false);
   });
 

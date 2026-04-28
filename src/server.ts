@@ -22,9 +22,56 @@ import type {
   ConversationMessage,
   OfferedSlot,
   ConfirmedInterview,
+  ResearchCard,
+  ResearchClaimType,
   TimeoutRule,
 } from './models.js';
 import * as crypto from 'node:crypto';
+
+// ---------------------------------------------------------------------------
+// Research card validation
+// ---------------------------------------------------------------------------
+
+const RESEARCH_CLAIM_TYPES = [
+  'project',
+  'public_profile',
+  'writing',
+  'talk',
+  'publication',
+  'company_context',
+  'other',
+] as const satisfies readonly ResearchClaimType[];
+
+const RESEARCH_CLAIM_TYPE_SET = new Set<string>(RESEARCH_CLAIM_TYPES);
+
+function validateResearchCards(cards: ResearchCard[]): string | null {
+  if (cards.length < 1 || cards.length > 5) {
+    return 'Research card saves must include 1 to 5 approved cards.';
+  }
+
+  for (const card of cards) {
+    if (!RESEARCH_CLAIM_TYPE_SET.has(card.claim_type)) {
+      return `Invalid claim_type: ${card.claim_type}`;
+    }
+    if (card.source_backed_facts.length < 1) {
+      return 'Each research card must include at least one source_backed_facts entry.';
+    }
+    for (const fact of card.source_backed_facts) {
+      if (fact.sources.length < 1) {
+        return 'Each source-backed fact must include at least one sources entry.';
+      }
+      for (const source of fact.sources) {
+        try {
+          new URL(source.url);
+        } catch {
+          return `Research source must include a valid URL: ${source.url}`;
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Email parsing helper
@@ -1697,6 +1744,32 @@ export function createHandlers(deps: ServerDeps) {
     }
   }
 
+  async function recruitSaveResearchCards(args: {
+    role: string;
+    candidate_id: string;
+    approved: boolean;
+    cards: ResearchCard[];
+  }): Promise<ToolResult> {
+    try {
+      if (!args.approved) {
+        return failure('approval_required', 'Research cards must be approved by the hiring manager before saving.');
+      }
+      const validationError = validateResearchCards(args.cards);
+      if (validationError) {
+        return failure('validation_error', validationError);
+      }
+      const cards = args.cards.map((card) => ({ ...card, use_in_scoring: 'context_only' as const }));
+      store.writeResearchCards(args.role, args.candidate_id, cards);
+      return success({
+        role: args.role,
+        candidate_id: args.candidate_id,
+        saved: cards.length,
+      });
+    } catch (e) {
+      return handleError(e);
+    }
+  }
+
   async function recruitStatus(args: {
     query_type: 'overview' | 'candidate' | 'timeouts' | 'inbox';
     role?: string;
@@ -1769,11 +1842,13 @@ export function createHandlers(deps: ServerDeps) {
           const conversation = store.readConversation(candidate.conversation_id);
           const recentMessages = conversation.slice(-5);
           const narrative = store.readNarrative(args.role, args.candidate_id);
+          const researchCards = store.readResearchCards(args.role, args.candidate_id);
 
           return success({
             candidate,
             recent_messages: recentMessages,
             narrative: narrative || null,
+            research_cards: researchCards,
             inbox_sync: inboxSync,
           });
         }
@@ -2160,6 +2235,7 @@ export function createHandlers(deps: ServerDeps) {
     recruitEvaluate,
     recruitCompare,
     recruitDecide,
+    recruitSaveResearchCards,
     recruitStatus,
     recruitCleanup,
   };
@@ -2332,7 +2408,49 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
     async (args) => handlers.recruitDecide(args),
   );
 
-  // Tool 7: recruit_status
+  // Tool 7: recruit_save_research_cards
+  server.tool(
+    'recruit_save_research_cards',
+    'Save approved candidate research cards as context-only interview prep data',
+    {
+      role: z.string(),
+      candidate_id: z.string(),
+      approved: z.boolean(),
+      cards: z.array(
+        z.object({
+          claim: z.string(),
+          claim_type: z.enum(RESEARCH_CLAIM_TYPES),
+          priority_reason: z.string(),
+          source_backed_facts: z.array(
+            z.object({
+              fact: z.string(),
+              sources: z.array(
+                z.object({
+                  title: z.string(),
+                  url: z.string().url(),
+                }),
+              ).min(1),
+            }),
+          ).min(1),
+          inferences: z.array(
+            z.object({
+              inference: z.string(),
+              confidence: z.enum(['low', 'medium', 'high']),
+            }),
+          ),
+          unknowns: z.array(z.string()),
+          attribution_limits: z.array(z.string()),
+          matching_relevance: z.string(),
+          follow_up_probes: z.array(z.string()),
+          use_in_scoring: z.literal('context_only'),
+        }),
+      ).min(1).max(5),
+    },
+    { destructiveHint: false, idempotentHint: false },
+    async (args) => handlers.recruitSaveResearchCards(args),
+  );
+
+  // Tool 8: recruit_status
   server.tool(
     'recruit_status',
     'Query recruitment status, candidate details, timeouts, or sync inbox',
@@ -2347,7 +2465,7 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
     async (args) => handlers.recruitStatus(args),
   );
 
-  // Tool 8: recruit_cleanup
+  // Tool 9: recruit_cleanup
   server.tool(
     'recruit_cleanup',
     'Delete a candidate or role cleanup target. Irreversible. Requires confirm: true.',

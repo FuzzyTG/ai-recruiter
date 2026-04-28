@@ -9,6 +9,7 @@ import {
   type AuditEntry,
   type ConversationMessage,
   type OfferedSlot,
+  type ResearchCard,
   type TimeoutRule,
   CandidateState,
   isValidTransition,
@@ -384,6 +385,20 @@ export class RecruiterStore {
     }
   }
 
+  private _roleDir(role: string): string {
+    if (role.includes('/') || role.includes('\\')) {
+      throw new ValidationError(`Invalid role name: ${JSON.stringify(role)}`);
+    }
+
+    const rolesBase = path.resolve(this.baseDir, 'roles');
+    const roleDir = path.resolve(rolesBase, role);
+    if (!roleDir.startsWith(`${rolesBase}${path.sep}`)) {
+      throw new ValidationError(`Invalid role path: traversal outside roles/ detected`);
+    }
+
+    return roleDir;
+  }
+
   readCandidate(role: string, candidateSlug: string): Candidate {
     this._validateCandidateId(candidateSlug);
     const candPath = path.join(
@@ -560,6 +575,38 @@ export class RecruiterStore {
       throw new Error(`Resume not found: ${candidateSlug}`);
     }
     return fs.readFileSync(resumePath, 'utf-8');
+  }
+
+  // ── Research Card Operations ──────────────────────────────────────────────
+
+  writeResearchCards(role: string, candidateSlug: string, cards: ResearchCard[]): void {
+    this.readCandidate(role, candidateSlug);
+    const researchDir = path.resolve(this._roleDir(role), 'candidates', 'research');
+    const cardsPath = path.resolve(researchDir, `${candidateSlug}.json`);
+    if (!cardsPath.startsWith(`${researchDir}${path.sep}`)) {
+      throw new ValidationError(`Invalid research path: traversal outside research/ detected`);
+    }
+    this._safeWrite(cardsPath, cards);
+    this._appendAudit({
+      timestamp: new Date().toISOString(),
+      tool: 'store',
+      action: 'write_research_cards',
+      details: { role, candidate_id: candidateSlug, count: cards.length, path: cardsPath },
+      actor: 'hm',
+    });
+  }
+
+  readResearchCards(role: string, candidateSlug: string): ResearchCard[] {
+    this._validateCandidateId(candidateSlug);
+    const researchDir = path.resolve(this._roleDir(role), 'candidates', 'research');
+    const cardsPath = path.resolve(researchDir, `${candidateSlug}.json`);
+    if (!cardsPath.startsWith(`${researchDir}${path.sep}`)) {
+      throw new ValidationError(`Invalid research path: traversal outside research/ detected`);
+    }
+    if (!fs.existsSync(cardsPath)) {
+      return [];
+    }
+    return JSON.parse(fs.readFileSync(cardsPath, 'utf-8')) as ResearchCard[];
   }
 
   // ── Conversation Operations ──────────────────────────────────────────────
@@ -799,16 +846,7 @@ export class RecruiterStore {
   deleteCandidate(role: string, candidateId: string): { conversation_history_count: number } {
     this._validateCandidateId(candidateId);
 
-    if (role.includes('/') || role.includes('\\')) {
-      throw new ValidationError(`Invalid role name: ${JSON.stringify(role)}`);
-    }
-
-    const rolesBase = path.resolve(this.baseDir, 'roles');
-    const roleDir = path.resolve(rolesBase, role);
-
-    if (!roleDir.startsWith(`${rolesBase}${path.sep}`)) {
-      throw new ValidationError(`Invalid role path: traversal outside roles/ detected`);
-    }
+    const roleDir = this._roleDir(role);
 
     // Verify candidate exists (throws CandidateNotFoundError if not)
     const candidate = this.readCandidate(role, candidateId);
@@ -816,6 +854,7 @@ export class RecruiterStore {
 
     const candidatesDir = path.resolve(roleDir, 'candidates');
     const resumesDir = path.resolve(candidatesDir, 'resumes');
+    const researchDir = path.resolve(candidatesDir, 'research');
 
     // 1. Remove candidate JSON
     const candPath = path.resolve(candidatesDir, `${candidateId}.json`);
@@ -835,7 +874,16 @@ export class RecruiterStore {
       fs.rmSync(resumePath);
     }
 
-    // 3. Remove narrative directory
+    // 3. Remove research card file
+    const researchPath = path.resolve(researchDir, `${candidateId}.json`);
+    if (!researchPath.startsWith(`${researchDir}${path.sep}`)) {
+      throw new ValidationError(`Invalid research path: traversal outside research/ detected`);
+    }
+    if (fs.existsSync(researchPath)) {
+      fs.rmSync(researchPath);
+    }
+
+    // 4. Remove narrative directory
     const narrativeDir = path.resolve(candidatesDir, candidateId);
     if (!narrativeDir.startsWith(`${candidatesDir}${path.sep}`)) {
       throw new ValidationError(`Invalid narrative path: traversal outside candidates/ detected`);
@@ -844,14 +892,14 @@ export class RecruiterStore {
       fs.rmSync(narrativeDir, { recursive: true, force: true });
     }
 
-    // 4. Remove conversation directory, constrained to the conversations base.
+    // 5. Remove conversation directory, constrained to the conversations base.
     const conversationsBase = path.resolve(this.baseDir, 'conversations');
     const convDir = path.resolve(conversationsBase, candidate.conversation_id);
     if (convDir.startsWith(`${conversationsBase}${path.sep}`) && fs.existsSync(convDir)) {
       fs.rmSync(convDir, { recursive: true, force: true });
     }
 
-    // 5. Audit log (never deleted)
+    // 6. Audit log (never deleted)
     this._appendAudit({
       timestamp: new Date().toISOString(),
       tool: 'store',
