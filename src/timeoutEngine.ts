@@ -7,14 +7,14 @@ import { appendSignature, generateFollowupBody } from './emailComposer.js';
 export interface TimeoutExecutionResult {
   candidate_id: string;
   role: string;
-  action: 'auto_followup' | 'auto_transition' | 'notify_hm' | string;
+  action: 'auto_followup' | 'auto_transition' | 'notify_hm';
   rule_description: string;
   executed: boolean;
   skipped_reason?: string;
   details?: Record<string, unknown>;
 }
 
-export function computeSlotsHash(offeredSlots: OfferedSlot[]): string {
+function computeSlotsHash(offeredSlots: OfferedSlot[]): string {
   if (!offeredSlots || offeredSlots.length === 0) return 'no_slots';
   const sorted = [...offeredSlots].sort(
     (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
@@ -252,7 +252,7 @@ export async function executeTimeouts(
           result = {
             candidate_id: t.candidate.candidate_id,
             role: t.role,
-            action: t.rule.action,
+            action: t.rule.action as TimeoutExecutionResult['action'],
             rule_description: t.rule.description,
             executed: false,
             skipped_reason: `unknown_action: ${t.rule.action}`,
