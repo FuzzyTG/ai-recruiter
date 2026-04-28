@@ -1702,15 +1702,26 @@ export function createHandlers(deps: ServerDeps) {
     role?: string;
     candidate_id?: string;
     auto_execute?: boolean;
+    sync_inbox?: boolean;
   }): Promise<ToolResult> {
     try {
+      const shouldSyncInbox = args.sync_inbox !== false;
+      const noSyncResult: InboxSyncResult = {
+        synced: 0,
+        unmatched: 0,
+        new_messages: [],
+        unmatched_messages: [],
+      };
+
       switch (args.query_type) {
         case 'overview': {
           const roles = args.role ? [args.role] : store.listRoles();
-          const inboxSync = await trySyncInboxForMatches(activeCandidateMatches(roles), {
-            terminalThreadIds: terminalThreadIds(roles),
-            fallbackEmailCounts: candidateEmailCounts(roles),
-          });
+          const inboxSync = shouldSyncInbox
+            ? await trySyncInboxForMatches(activeCandidateMatches(roles), {
+              terminalThreadIds: terminalThreadIds(roles),
+              fallbackEmailCounts: candidateEmailCounts(roles),
+            })
+            : noSyncResult;
           const overview: Record<string, Record<string, Array<{ candidate_id: string; name: string; overall_score: number | null }>>> = {};
 
           for (const role of roles) {
@@ -1743,15 +1754,17 @@ export function createHandlers(deps: ServerDeps) {
           }
 
           const preSyncCandidate = store.readCandidate(args.role, args.candidate_id);
-          const inboxSync = await trySyncInboxForMatches(
-            isTerminalState(preSyncCandidate.state)
-              ? []
-              : activeCandidateMatches([args.role], args.candidate_id),
-            {
-              terminalThreadIds: terminalThreadIds([args.role]),
-              fallbackEmailCounts: candidateEmailCounts([args.role]),
-            },
-          );
+          const inboxSync = shouldSyncInbox
+            ? await trySyncInboxForMatches(
+              isTerminalState(preSyncCandidate.state)
+                ? []
+                : activeCandidateMatches([args.role], args.candidate_id),
+              {
+                terminalThreadIds: terminalThreadIds([args.role]),
+                fallbackEmailCounts: candidateEmailCounts([args.role]),
+              },
+            )
+            : noSyncResult;
           const candidate = store.readCandidate(args.role, args.candidate_id);
           const conversation = store.readConversation(candidate.conversation_id);
           const recentMessages = conversation.slice(-5);
@@ -1767,10 +1780,12 @@ export function createHandlers(deps: ServerDeps) {
 
         case 'timeouts': {
           const roles = args.role ? [args.role] : store.listRoles();
-          const inboxSync = await trySyncInboxForMatches(activeCandidateMatches(roles), {
-            terminalThreadIds: terminalThreadIds(roles),
-            fallbackEmailCounts: candidateEmailCounts(roles),
-          });
+          const inboxSync = shouldSyncInbox
+            ? await trySyncInboxForMatches(activeCandidateMatches(roles), {
+              terminalThreadIds: terminalThreadIds(roles),
+              fallbackEmailCounts: candidateEmailCounts(roles),
+            })
+            : noSyncResult;
           let timeouts;
           if (args.role) {
             const roleTimeouts = store.checkTimeouts(args.role);
@@ -2326,6 +2341,7 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
       role: z.string().optional(),
       candidate_id: z.string().optional(),
       auto_execute: z.boolean().optional(),
+      sync_inbox: z.boolean().optional(),
     },
     { readOnlyHint: false, idempotentHint: true },
     async (args) => handlers.recruitStatus(args),

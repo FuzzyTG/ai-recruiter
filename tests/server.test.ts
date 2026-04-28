@@ -1184,6 +1184,81 @@ describe('recruit_status', () => {
     expect(store.readConversation('conv-C-20260414-011')).toHaveLength(0);
   });
 
+  it('candidate: skips inbox sync when sync_inbox is false', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+      channels: { primary: 'email' as const, email: 'candidate@test.com' },
+    });
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-010');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'readonly-candidate-msg-001',
+          threadId: undefined,
+          from: 'candidate@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Read-only check',
+          text: 'This should not be synced.',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({
+      query_type: 'candidate',
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      sync_inbox: false,
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(emailClient.listMessages).not.toHaveBeenCalled();
+    expect(parsed.data.inbox_sync.synced).toBe(0);
+    expect(store.readConversation('conv-C-20260414-010')).toHaveLength(0);
+  });
+
+  it('overview: skips inbox sync when sync_inbox is false', async () => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+      channels: { primary: 'email' as const, email: 'candidate@test.com' },
+    });
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-001');
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'readonly-overview-msg-001',
+          threadId: undefined,
+          from: 'candidate@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Read-only overview',
+          text: 'This should not be synced.',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({
+      query_type: 'overview',
+      role: 'test-role',
+      sync_inbox: false,
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(emailClient.listMessages).not.toHaveBeenCalled();
+    expect(parsed.data.inbox_sync.synced).toBe(0);
+    expect(store.readConversation('conv-C-20260414-001')).toHaveLength(0);
+  });
+
   it('overview: syncs active candidates across roles and skips terminal candidates', async () => {
     store.writeFramework('other-role', makeFramework('other-role'));
     const activeA = makeCandidate({
