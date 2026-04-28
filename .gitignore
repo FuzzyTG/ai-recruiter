@@ -10,6 +10,7 @@ OPC-SESSION-*.md
 run-opc.sh
 session-*.log
 .harness/
+.harness.archive-*/
 *-debug.log
 
 # Python
