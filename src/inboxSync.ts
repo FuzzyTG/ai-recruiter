@@ -109,7 +109,7 @@ export function emptyInboxSyncResult(): InboxSyncResult {
   };
 }
 
-export async function syncInboxForMatches(
+async function syncInboxForMatches(
   store: RecruiterStore,
   emailClient: RecruiterMailClient | undefined,
   matches: CandidateMatch[],
