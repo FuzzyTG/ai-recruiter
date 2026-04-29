@@ -1,6 +1,6 @@
 {
   "name": "ai-recruiter",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -17,6 +17,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "agentmail": "^0.4.18",
     "node-ical": "^0.26.0",
+    "tsx": "^4.8.1",
     "zod": "^4.3.6"
   }
 }

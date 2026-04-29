@@ -1,15 +1,18 @@
 {
   "name": "ai-recruiter",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Recruiting domain expertise for AI agents — turns your assistant into a recruiting coordinator",
   "author": { "name": "FuzzyTG" },
   "repository": "https://github.com/FuzzyTG/ai-recruiter",
   "license": "MIT",
   "mcpServers": {
     "ai-recruiter": {
-      "command": "npx",
-      "args": ["tsx", "${CLAUDE_PLUGIN_ROOT}/src/server.ts"],
-      "cwd": "${CLAUDE_PLUGIN_ROOT}"
+      "command": "npm",
+      "args": ["--prefix", "${CLAUDE_PLUGIN_DATA}", "exec", "tsx", "--", "${CLAUDE_PLUGIN_ROOT}/src/server.ts"],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}",
+      "env": {
+        "NODE_PATH": "${CLAUDE_PLUGIN_DATA}/node_modules"
+      }
     }
   }
 }
