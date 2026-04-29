@@ -154,32 +154,158 @@ export class RecruiterStore {
 
   // ── Framework Operations ─────────────────────────────────────────────────
 
-  readFramework(role: string): Framework {
-    const fwPath = path.join(this.baseDir, 'roles', role, 'framework.json');
+  private _frameworkPath(role: string, version?: number): string {
+    if (version === undefined || version === 1) {
+      return path.join(this.baseDir, 'roles', role, 'framework.json');
+    }
+    return path.join(this.baseDir, 'roles', role, 'frameworks', `v${version}.json`);
+  }
+
+  private _normalizeFramework(role: string, fw: Framework, version: number, active: boolean): Framework {
+    return {
+      ...fw,
+      role: fw.role ?? role,
+      role_display: fw.role_display ?? fw.role ?? role,
+      framework_version: fw.framework_version ?? version,
+      active,
+    };
+  }
+
+  private _frameworkContentKey(fw: Framework): string {
+    return JSON.stringify({
+      schema_version: fw.schema_version,
+      dimensions: fw.dimensions,
+      confirmed: fw.confirmed,
+      created_at: fw.created_at,
+    });
+  }
+
+  private _assertConfirmedFrameworkContentImmutable(
+    role: string,
+    version: number,
+    existingVersions: number[],
+    toWrite: Framework,
+  ): void {
+    if (!existingVersions.includes(version)) return;
+    const existing = this._normalizeFramework(
+      role,
+      this._readFrameworkFile(role, version),
+      version,
+      toWrite.active,
+    );
+    if (!existing.confirmed) return;
+    if (this._frameworkContentKey(existing) !== this._frameworkContentKey(toWrite)) {
+      throw new ValidationError(`Cannot modify content of confirmed framework version ${version} for role ${role}`);
+    }
+  }
+
+  private _readFrameworkFile(role: string, version: number): Framework {
+    const fwPath = this._frameworkPath(role, version);
     if (!fs.existsSync(fwPath)) {
       throw new RoleNotFoundError(role);
     }
-    const parsed = JSON.parse(fs.readFileSync(fwPath, 'utf-8')) as Framework;
-    if (!parsed.role_display) {
-      parsed.role_display = parsed.role ?? role;
+    return JSON.parse(fs.readFileSync(fwPath, 'utf-8')) as Framework;
+  }
+
+  private _readAndBackfillFramework(role: string, version: number, active: boolean): Framework {
+    const fwPath = this._frameworkPath(role, version);
+    const parsed = this._readFrameworkFile(role, version);
+    const normalized = this._normalizeFramework(role, parsed, version, active);
+    if (
+      parsed.role !== normalized.role
+      || parsed.role_display !== normalized.role_display
+      || parsed.framework_version !== normalized.framework_version
+      || parsed.active !== normalized.active
+    ) {
+      this._safeWrite(fwPath, normalized);
     }
-    return parsed;
+    return normalized;
+  }
+
+  private _frameworkVersionNumbers(role: string): number[] {
+    const roleDir = path.join(this.baseDir, 'roles', role);
+    const v1Path = path.join(roleDir, 'framework.json');
+    if (!fs.existsSync(v1Path)) {
+      throw new RoleNotFoundError(role);
+    }
+
+    const versionNumbers = [1];
+    const frameworksDir = path.join(roleDir, 'frameworks');
+    if (fs.existsSync(frameworksDir)) {
+      for (const file of fs.readdirSync(frameworksDir)) {
+        const match = /^v(\d+)\.json$/.exec(file);
+        if (!match) continue;
+        versionNumbers.push(Number(match[1]));
+      }
+    }
+    return versionNumbers.sort((a, b) => a - b);
+  }
+
+  private _activeFrameworkVersion(role: string, versionNumbers = this._frameworkVersionNumbers(role)): number {
+    const frameworks = versionNumbers.map((version) => ({
+      version,
+      framework: this._readFrameworkFile(role, version),
+    }));
+    const latestConfirmed = [...frameworks].reverse().find(({ framework }) => framework.confirmed)?.version;
+    return latestConfirmed ?? versionNumbers[versionNumbers.length - 1];
+  }
+
+  readFrameworkVersion(role: string, version: number): Framework {
+    const activeVersion = this._activeFrameworkVersion(role);
+    return this._readAndBackfillFramework(role, version, version === activeVersion);
+  }
+
+  readFramework(role: string): Framework {
+    const activeVersion = this._activeFrameworkVersion(role);
+    return this._readAndBackfillFramework(role, activeVersion, true);
+  }
+
+  listFrameworkVersions(role: string): Framework[] {
+    const versionNumbers = this._frameworkVersionNumbers(role);
+    const activeVersion = this._activeFrameworkVersion(role, versionNumbers);
+    return versionNumbers.map((version) => this._readAndBackfillFramework(role, version, version === activeVersion));
   }
 
   writeFramework(role: string, fw: Framework): void {
-    const fwPath = path.join(this.baseDir, 'roles', role, 'framework.json');
-    const toWrite: Framework = {
-      ...fw,
-      role_display: fw.role_display ?? fw.role ?? role,
-    };
+    const version = fw.framework_version ?? 1;
+    const fwPath = this._frameworkPath(role, version);
+    let existingVersions: number[] = [];
+    try {
+      existingVersions = this._frameworkVersionNumbers(role);
+    } catch (error) {
+      if (!(error instanceof RoleNotFoundError)) throw error;
+    }
+    const activeVersion = fw.confirmed
+      ? Math.max(version, existingVersions.filter((existingVersion) => {
+        if (existingVersion === version) return false;
+        return this._readFrameworkFile(role, existingVersion).confirmed;
+      }).at(-1) ?? version)
+      : existingVersions.length > 0
+        ? this._activeFrameworkVersion(role, existingVersions)
+        : version;
+    const toWrite = this._normalizeFramework(role, fw, version, version === activeVersion);
+    this._assertConfirmedFrameworkContentImmutable(role, version, existingVersions, toWrite);
     this._safeWrite(fwPath, toWrite);
+    for (const existingVersion of this._frameworkVersionNumbers(role)) {
+      if (existingVersion === version) continue;
+      const existingPath = this._frameworkPath(role, existingVersion);
+      const parsed = this._readFrameworkFile(role, existingVersion);
+      const normalized = this._normalizeFramework(role, parsed, existingVersion, existingVersion === activeVersion);
+      if (parsed.active !== normalized.active) {
+        this._safeWrite(existingPath, normalized);
+      }
+    }
     this._appendAudit({
       timestamp: new Date().toISOString(),
       tool: 'store',
       action: 'write_framework',
-      details: { role, path: fwPath },
+      details: { role, path: fwPath, framework_version: version },
       actor: 'system',
     });
+  }
+
+  nextFrameworkVersion(role: string): number {
+    return Math.max(...this.listFrameworkVersions(role).map((fw) => fw.framework_version)) + 1;
   }
 
   listRoles(): string[] {
@@ -399,6 +525,27 @@ export class RecruiterStore {
     return roleDir;
   }
 
+  private _normalizeCandidate(candidate: Candidate): Candidate {
+    if (candidate.scores && !candidate.scores.framework_version) {
+      candidate.scores.framework_version = 1;
+    }
+    for (const evaluation of candidate.evaluations ?? []) {
+      if (!evaluation.framework_version) {
+        evaluation.framework_version = 1;
+      }
+    }
+    return candidate;
+  }
+
+  private _normalizeCandidateWithBackfill(candidate: Candidate, candPath: string): Candidate {
+    const before = JSON.stringify(candidate);
+    const normalized = this._normalizeCandidate(candidate);
+    if (JSON.stringify(normalized) !== before) {
+      this._safeWrite(candPath, normalized);
+    }
+    return normalized;
+  }
+
   readCandidate(role: string, candidateSlug: string): Candidate {
     this._validateCandidateId(candidateSlug);
     const candPath = path.join(
@@ -411,7 +558,10 @@ export class RecruiterStore {
     if (!fs.existsSync(candPath)) {
       throw new CandidateNotFoundError(candidateSlug);
     }
-    return JSON.parse(fs.readFileSync(candPath, 'utf-8')) as Candidate;
+    return this._normalizeCandidateWithBackfill(
+      JSON.parse(fs.readFileSync(candPath, 'utf-8')) as Candidate,
+      candPath,
+    );
   }
 
   writeCandidate(role: string, candidate: Candidate): void {
@@ -442,11 +592,13 @@ export class RecruiterStore {
     return fs
       .readdirSync(candDir)
       .filter((f) => f.endsWith('.json'))
-      .map((f) =>
-        JSON.parse(
-          fs.readFileSync(path.join(candDir, f), 'utf-8'),
-        ) as Candidate,
-      );
+      .map((f) => {
+        const candPath = path.join(candDir, f);
+        return this._normalizeCandidateWithBackfill(
+          JSON.parse(fs.readFileSync(candPath, 'utf-8')) as Candidate,
+          candPath,
+        );
+      });
   }
 
   transitionState(

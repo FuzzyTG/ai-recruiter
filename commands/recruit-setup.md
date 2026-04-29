@@ -16,7 +16,7 @@ description: Set up recruiting config, evaluation framework, and job description
 
 - If `setup_required` error → this is a fresh install. Proceed to Step 0.
 - If success → config exists. Proceed to Step 0 to verify the API key is available, then go to Step 1B (show existing config and offer updates), then skip to Step 3 (framework creation).
-- If role already has a confirmed framework → inform HM. They can create a new role or skip. Still check Step 0 for API key.
+- If role already has a confirmed framework → inform HM that any adjustment creates the next framework version under the same role, and only the latest confirmed version is active. Do not recommend creating `role-v2` as the default path. Still check Step 0 for API key.
 
 ## Protocol
 
@@ -76,7 +76,7 @@ Verify response: `config_created: true`. If `inbox_email` is returned, show it t
 
 ### Step 4: Generate Evaluation Framework
 
-**[LLM]** From the JD, propose 4-6 evaluation dimensions. Each dimension needs:
+**[LLM]** From the JD or requested adjustment, propose 4-6 evaluation dimensions. If adjusting a confirmed framework, explain that the confirmed version remains immutable and saving the adjustment creates the next framework version for the same role. Each dimension needs:
 
 | Field | Type | Constraint |
 |-------|------|------------|
@@ -99,7 +99,7 @@ If server returns `validation_error` (weights don't sum to 1.0), adjust and retr
 
 **Approval Gate**: Show HM the final framework table. Ask explicitly:
 
-> "Once confirmed, this framework cannot be changed. Confirm?"
+> "Once confirmed, this framework version cannot be changed. Future adjustments will create a new version under the same role. Confirm?"
 
 Only on explicit "yes":
 

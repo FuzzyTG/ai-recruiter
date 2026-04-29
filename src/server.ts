@@ -41,6 +41,12 @@ import {
 } from './emailComposer.js';
 import * as crypto from 'node:crypto';
 import { executeTimeouts, type TimeoutExecutionResult } from './timeoutEngine.js';
+import {
+  candidateFrameworkVersion,
+  candidateFrameworkVersions,
+  frameworkVersionsAreWeightOnlyCompatible,
+  normalizedComparisonScore,
+} from './frameworkVersions.js';
 
 function success(data: Record<string, unknown>) {
   return {
@@ -302,7 +308,10 @@ export function createHandlers(deps: ServerDeps) {
         }
       }
 
-      // Step 3: Framework creation
+      let affectedFrameworkVersion: number | undefined;
+      let activeFrameworkVersionBeforeWrite: number | undefined;
+
+      // Step 3: Framework creation/versioning
       if (args.dimensions) {
         const weightSum = args.dimensions.reduce((s, d) => s + d.weight, 0);
         if (Math.abs(weightSum - 1.0) > 0.01) {
@@ -312,17 +321,15 @@ export function createHandlers(deps: ServerDeps) {
           );
         }
 
-        // Check if framework already exists and is confirmed
+        let frameworkVersion = 1;
         try {
-          const existingFw = store.readFramework(role);
-          if (existingFw.confirmed) {
-            return failure(
-              'validation_error',
-              'Cannot update a confirmed framework. Create a new role instead.',
-            );
-          }
+          const versions = store.listFrameworkVersions(role);
+          const activeFw = store.readFramework(role);
+          activeFrameworkVersionBeforeWrite = activeFw.framework_version;
+          const existingDraft = [...versions].reverse().find((version) => !version.confirmed);
+          frameworkVersion = existingDraft?.framework_version
+            ?? (activeFw.confirmed ? store.nextFrameworkVersion(role) : activeFw.framework_version);
         } catch (e) {
-          // RoleNotFoundError is fine - means no framework exists yet
           if (!(e instanceof RoleNotFoundError)) throw e;
         }
 
@@ -331,11 +338,15 @@ export function createHandlers(deps: ServerDeps) {
           role,
           role_display: roleDisplay,
           dimensions: args.dimensions,
-          confirmed: false,
+          confirmed: args.confirm === true,
+          active: args.confirm === true,
+          framework_version: frameworkVersion,
           created_at: new Date().toISOString(),
         };
         store.writeFramework(role, fw);
+        affectedFrameworkVersion = frameworkVersion;
         framework_created = true;
+        framework_confirmed = args.confirm === true;
       }
 
       // Step 4: JD
@@ -344,14 +355,22 @@ export function createHandlers(deps: ServerDeps) {
       }
 
       // Step 5: Confirm framework
-      if (args.confirm === true) {
-        const fw = store.readFramework(role);
+      if (args.confirm === true && !framework_confirmed) {
+        activeFrameworkVersionBeforeWrite = store.readFramework(role).framework_version;
+        const versions = store.listFrameworkVersions(role);
+        const fw = [...versions].reverse().find((version) => !version.confirmed)
+          ?? versions[versions.length - 1];
         fw.confirmed = true;
+        fw.active = true;
         if (!fw.role_display) fw.role_display = roleDisplay;
         store.writeFramework(role, fw);
+        affectedFrameworkVersion = fw.framework_version;
         framework_confirmed = true;
       }
 
+      const activeFramework = (() => {
+        try { return store.readFramework(role); } catch { return null; }
+      })();
       const result: Record<string, unknown> = {
         config_created,
         config_updated,
@@ -360,6 +379,17 @@ export function createHandlers(deps: ServerDeps) {
         role_resolved: role,
         role_display: roleDisplay,
       };
+      if (activeFramework) {
+        result.framework_version = activeFramework.framework_version;
+        result.current_framework_version = activeFramework.framework_version;
+        result.active_framework_version = activeFramework.framework_version;
+      }
+      if (affectedFrameworkVersion !== undefined) {
+        result.affected_framework_version = affectedFrameworkVersion;
+      }
+      if (activeFrameworkVersionBeforeWrite !== undefined) {
+        result.previous_active_framework_version = activeFrameworkVersionBeforeWrite;
+      }
       if (inbox_email) {
         result.inbox_email = inbox_email;
       }
@@ -447,6 +477,7 @@ export function createHandlers(deps: ServerDeps) {
         scores: {
           overall: weightedAvg,
           dimensions: args.scores,
+          framework_version: framework.framework_version,
         },
         evaluations: [],
         offered_slots: [],
@@ -489,6 +520,7 @@ export function createHandlers(deps: ServerDeps) {
         dimensions: args.scores,
         role_resolved: role,
         role_display: roleDisplay,
+        framework_version: framework.framework_version,
       });
     } catch (e) {
       return handleError(e);
@@ -1163,6 +1195,7 @@ export function createHandlers(deps: ServerDeps) {
         scores: args.scores,
         input_type: args.input_type,
         timestamp: new Date().toISOString(),
+        framework_version: framework.framework_version,
       };
 
       // Append evaluation
@@ -1171,9 +1204,12 @@ export function createHandlers(deps: ServerDeps) {
       // Recompute overall score as average of all evaluations' weighted averages
       let totalWeightedAvg = 0;
       for (const evalEntry of candidate.evaluations) {
+        const evalFramework = evalEntry.framework_version === framework.framework_version
+          ? framework
+          : store.readFrameworkVersion(args.role, evalEntry.framework_version);
         totalWeightedAvg += validators.computeWeightedAverage(
           evalEntry.scores,
-          framework,
+          evalFramework,
         );
       }
       const overallScore = Math.round(
@@ -1184,6 +1220,7 @@ export function createHandlers(deps: ServerDeps) {
       candidate.scores = {
         overall: overallScore,
         dimensions: args.scores,
+        framework_version: framework.framework_version,
       };
 
       // Write candidate
@@ -1202,6 +1239,7 @@ export function createHandlers(deps: ServerDeps) {
         evaluation_round: round,
         overall_score: overallScore,
         dimension_scores: args.scores,
+        framework_version: framework.framework_version,
       });
     } catch (e) {
       return handleError(e);
@@ -1227,28 +1265,67 @@ export function createHandlers(deps: ServerDeps) {
         candidates = candidates.filter((c) => !isTerminalState(c.state));
       }
 
-      // Sort by overall score descending
-      candidates.sort((a, b) => {
-        const scoreA = a.scores?.overall ?? 0;
-        const scoreB = b.scores?.overall ?? 0;
-        return scoreB - scoreA;
+      const versionNumbers = Array.from(new Set(candidates.flatMap(candidateFrameworkVersions)));
+      const versionsForCompatibility = Array.from(new Set([...versionNumbers, framework.framework_version]))
+        .map((version) => store.readFrameworkVersion(args.role, version));
+      const activeVersionChanged = versionNumbers.length > 0 && !versionNumbers.includes(framework.framework_version);
+      const mixedVersions = versionNumbers.length > 1 || activeVersionChanged;
+      const weightOnlyCompatible = frameworkVersionsAreWeightOnlyCompatible(versionsForCompatibility);
+      const rankingMode = !mixedVersions
+        ? 'normal'
+        : weightOnlyCompatible
+          ? 'normalized_weight_only'
+          : 'not_apples_to_apples';
+
+      const comparison = candidates.map((c) => {
+        const normalizedOverallScore = mixedVersions && weightOnlyCompatible && c.scores
+          ? normalizedComparisonScore(c, framework, (role, version) => store.readFrameworkVersion(role, version))
+          : null;
+        const comparisonScore = rankingMode === 'not_apples_to_apples'
+          ? null
+          : normalizedOverallScore ?? c.scores?.overall ?? null;
+        return {
+          candidate_id: c.candidate_id,
+          name: c.name,
+          state: c.state,
+          overall_score: c.scores?.overall ?? null,
+          framework_version: candidateFrameworkVersion(c),
+          normalized_overall_score: normalizedOverallScore,
+          comparison_score: comparisonScore,
+          dimensions: c.scores?.dimensions ?? null,
+          evaluations_count: c.evaluations.length,
+        };
       });
 
-      const comparison = candidates.map((c) => ({
-        candidate_id: c.candidate_id,
-        name: c.name,
-        state: c.state,
-        overall_score: c.scores?.overall ?? null,
-        dimensions: c.scores?.dimensions ?? null,
-        evaluations_count: c.evaluations.length,
-      }));
+      if (rankingMode !== 'not_apples_to_apples') {
+        comparison.sort((a, b) => (b.comparison_score ?? 0) - (a.comparison_score ?? 0));
+      }
 
-      return success({
+      const response: Record<string, unknown> = {
         role: args.role,
+        framework_version: framework.framework_version,
         framework_dimensions: framework.dimensions.map((d) => d.name),
+        ranking_mode: rankingMode,
         candidates: comparison,
         total: comparison.length,
-      });
+      };
+      if (mixedVersions) {
+        response.comparison_warning = weightOnlyCompatible
+          ? {
+              type: 'mixed_versions_weight_only',
+              message: 'Candidates were scored under different framework versions. Dimension identities match, so comparison_score recomputes older raw dimension scores using the active framework weights.',
+              active_framework_version: framework.framework_version,
+              candidate_framework_versions: versionNumbers.sort((a, b) => a - b),
+            }
+          : {
+              type: 'mixed_versions_structural',
+              message: 'Candidates were scored under structurally different framework versions. re-score older candidates before ranking; results are not apples-to-apples.',
+              active_framework_version: framework.framework_version,
+              candidate_framework_versions: versionNumbers.sort((a, b) => a - b),
+            };
+      }
+
+      return success(response);
     } catch (e) {
       return handleError(e);
     }
@@ -1399,11 +1476,16 @@ export function createHandlers(deps: ServerDeps) {
               fallbackEmailCounts: candidateEmailCounts(store, roles),
             })
             : emptyInboxSyncResult();
-          const overview: Record<string, Record<string, Array<{ candidate_id: string; name: string; overall_score: number | null }>>> = {};
+          const overview: Record<string, Record<string, Array<{ candidate_id: string; name: string; overall_score: number | null; framework_version: number | null }>>> = {};
+          const frameworkVersions: Record<string, { active: number; candidate_score_versions: number[] }> = {};
+          const versionWarnings: Record<string, { type: string; message: string }> = {};
 
           for (const role of roles) {
             const candidates = store.listCandidates(role);
-            const grouped: Record<string, Array<{ candidate_id: string; name: string; overall_score: number | null }>> = {};
+            const grouped: Record<string, Array<{ candidate_id: string; name: string; overall_score: number | null; framework_version: number | null }>> = {};
+            const activeFramework = store.readFramework(role);
+            const candidateVersions = Array.from(new Set(candidates.flatMap(candidateFrameworkVersions)))
+              .sort((a, b) => a - b);
 
             for (const c of candidates) {
               if (!grouped[c.state]) {
@@ -1413,13 +1495,32 @@ export function createHandlers(deps: ServerDeps) {
                 candidate_id: c.candidate_id,
                 name: c.name,
                 overall_score: c.scores?.overall ?? null,
+                framework_version: candidateFrameworkVersion(c),
               });
             }
 
             overview[role] = grouped;
+            frameworkVersions[role] = {
+              active: activeFramework.framework_version,
+              candidate_score_versions: candidateVersions,
+            };
+            if (candidateVersions.some((version) => version !== activeFramework.framework_version)) {
+              const versionSet = new Set([...candidateVersions, activeFramework.framework_version]);
+              const versions = Array.from(versionSet).map((version) => store.readFrameworkVersion(role, version));
+              const weightOnlyCompatible = frameworkVersionsAreWeightOnlyCompatible(versions);
+              versionWarnings[role] = weightOnlyCompatible
+                ? {
+                    type: 'mixed_versions_weight_only',
+                    message: 'Some candidates were scored under different framework weights with matching dimensions. Use recruit_compare to normalize comparison scores.',
+                  }
+                : {
+                    type: 'mixed_versions_structural',
+                    message: 'Some candidates were scored under structurally different framework versions. Re-score older candidates before ranking.',
+                  };
+            }
           }
 
-          return success({ overview, agentmail_key_configured: !!getApiKey(), inbox_sync: inboxSync });
+          return success({ overview, framework_versions: frameworkVersions, version_warnings: versionWarnings, agentmail_key_configured: !!getApiKey(), inbox_sync: inboxSync });
         }
 
         case 'candidate': {

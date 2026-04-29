@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
-import { createHandlers, type ServerDeps, stripTrailingSignature, appendSignature, generateFollowupBody } from '../src/server.js';
+import { createHandlers, stripTrailingSignature, appendSignature, generateFollowupBody } from '../src/server.js';
 import {
   RecruiterStore,
   SetupRequiredError,
@@ -151,6 +152,26 @@ afterEach(() => {
 // =========================================================================
 
 describe('recruit_setup', () => {
+  it('command guidance keeps adjusted frameworks under the same role', () => {
+    const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const commandPaths = [
+      path.join(repoRoot, 'commands', 'recruit-setup.md'),
+      path.join(repoRoot, '.claude', 'commands', 'recruit-setup.md'),
+    ].filter((commandPath) => fs.existsSync(commandPath));
+
+    expect(commandPaths.length).toBeGreaterThan(0);
+    for (const commandPath of commandPaths) {
+      const text = fs.readFileSync(commandPath, 'utf-8');
+      expect(text).toContain('Role resolution is silent on success');
+      expect(text).toContain('### Step 0: AgentMail API Key Check');
+      expect(text).toContain('### Step 1B: Show Existing Config');
+      expect(text).toContain('next framework version under the same role');
+      expect(text).toContain('Do not recommend creating `role-v2` as the default path');
+      expect(text).not.toContain('They can create a new role or skip');
+      expect(text).not.toContain('Once confirmed, this framework cannot be changed. Confirm?');
+    }
+  });
+
   it('creates config when none exists', async () => {
     const result = await handlers.recruitSetup({
       role: 'eng',
@@ -209,37 +230,168 @@ describe('recruit_setup', () => {
     expect(parsed.error).toBe('validation_error');
   });
 
-  it('confirms framework and rejects subsequent dimension update', async () => {
+  it('creates v2 under the same role when adjusting a confirmed framework', async () => {
     store.writeConfig(makeConfig());
 
-    // Create framework
     await handlers.recruitSetup({
       role: 'eng',
       dimensions: [
         { name: 'technical', weight: 0.6, rubric: 'Tech', description: 'Tech' },
         { name: 'culture', weight: 0.4, rubric: 'Culture', description: 'Culture' },
       ],
-    });
-
-    // Confirm
-    const confirmResult = await handlers.recruitSetup({
-      role: 'eng',
       confirm: true,
     });
-    const confirmParsed = parseResult(confirmResult);
-    expect(confirmParsed.data.framework_confirmed).toBe(true);
 
-    // Try to update - should fail
     const updateResult = await handlers.recruitSetup({
       role: 'eng',
       dimensions: [
         { name: 'algo', weight: 0.5, rubric: 'Algo', description: 'Algorithms' },
         { name: 'systems', weight: 0.5, rubric: 'Sys', description: 'Systems' },
       ],
+      confirm: true,
     });
     const updateParsed = parseResult(updateResult);
-    expect(updateParsed.success).toBe(false);
-    expect(updateParsed.error).toBe('validation_error');
+
+    expect(updateParsed.success).toBe(true);
+    expect(updateParsed.data.framework_created).toBe(true);
+    expect(updateParsed.data.framework_confirmed).toBe(true);
+    expect(updateParsed.data.framework_version).toBe(2);
+    expect(updateParsed.data.role_resolved).toBe('eng');
+    expect(store.listRoles()).toEqual(['eng']);
+    expect(store.readFramework('eng').framework_version).toBe(2);
+    expect(store.listFrameworkVersions('eng').map((fw) => fw.framework_version)).toEqual([1, 2]);
+  });
+
+  it('updates an existing unconfirmed draft instead of creating another version', async () => {
+    store.writeConfig(makeConfig());
+
+    await handlers.recruitSetup({
+      role: 'eng',
+      dimensions: [
+        { name: 'technical', weight: 0.6, rubric: 'Tech', description: 'Tech' },
+        { name: 'culture', weight: 0.4, rubric: 'Culture', description: 'Culture' },
+      ],
+      confirm: true,
+    });
+
+    await handlers.recruitSetup({
+      role: 'eng',
+      dimensions: [
+        { name: 'algo', weight: 0.5, rubric: 'Algo', description: 'Algorithms' },
+        { name: 'systems', weight: 0.5, rubric: 'Sys', description: 'Systems' },
+      ],
+    });
+
+    const secondDraftResult = await handlers.recruitSetup({
+      role: 'eng',
+      dimensions: [
+        { name: 'product', weight: 0.7, rubric: 'Product', description: 'Product sense' },
+        { name: 'execution', weight: 0.3, rubric: 'Execution', description: 'Execution' },
+      ],
+    });
+    const secondDraftParsed = parseResult(secondDraftResult);
+
+    expect(secondDraftParsed.success).toBe(true);
+    expect(secondDraftParsed.data.affected_framework_version).toBe(2);
+    expect(secondDraftParsed.data.active_framework_version).toBe(1);
+    expect(store.listFrameworkVersions('eng').map((fw) => fw.framework_version)).toEqual([1, 2]);
+    expect(store.readFrameworkVersion('eng', 2).dimensions.map((d) => d.name)).toEqual(['product', 'execution']);
+  });
+
+  it('reports affected draft and active confirmed framework versions separately', async () => {
+    store.writeConfig(makeConfig());
+
+    await handlers.recruitSetup({
+      role: 'eng',
+      dimensions: [
+        { name: 'technical', weight: 0.6, rubric: 'Tech', description: 'Tech' },
+        { name: 'culture', weight: 0.4, rubric: 'Culture', description: 'Culture' },
+      ],
+      confirm: true,
+    });
+
+    const draftResult = await handlers.recruitSetup({
+      role: 'eng',
+      dimensions: [
+        { name: 'algo', weight: 0.5, rubric: 'Algo', description: 'Algorithms' },
+        { name: 'systems', weight: 0.5, rubric: 'Sys', description: 'Systems' },
+      ],
+    });
+    const draftParsed = parseResult(draftResult);
+
+    expect(draftParsed.success).toBe(true);
+    expect(draftParsed.data.affected_framework_version).toBe(2);
+    expect(draftParsed.data.current_framework_version).toBe(1);
+    expect(draftParsed.data.active_framework_version).toBe(1);
+    expect(draftParsed.data.framework_version).toBe(1);
+  });
+
+  it('confirms the latest unconfirmed framework after a dimensions-only adjustment', async () => {
+    store.writeConfig(makeConfig());
+
+    await handlers.recruitSetup({
+      role: 'eng',
+      dimensions: [
+        { name: 'technical', weight: 0.6, rubric: 'Tech', description: 'Tech' },
+        { name: 'culture', weight: 0.4, rubric: 'Culture', description: 'Culture' },
+      ],
+      confirm: true,
+    });
+
+    const v1Before = store.readFrameworkVersion('eng', 1);
+
+    const draftResult = await handlers.recruitSetup({
+      role: 'eng',
+      dimensions: [
+        { name: 'algo', weight: 0.5, rubric: 'Algo', description: 'Algorithms' },
+        { name: 'systems', weight: 0.5, rubric: 'Sys', description: 'Systems' },
+      ],
+    });
+    const draftParsed = parseResult(draftResult);
+    expect(draftParsed.success).toBe(true);
+    expect(draftParsed.data.affected_framework_version).toBe(2);
+    expect(draftParsed.data.active_framework_version).toBe(1);
+    expect(store.readFrameworkVersion('eng', 2).confirmed).toBe(false);
+
+    const confirmResult = await handlers.recruitSetup({ role: 'eng', confirm: true });
+    const confirmParsed = parseResult(confirmResult);
+
+    expect(confirmParsed.success).toBe(true);
+    expect(confirmParsed.data.framework_confirmed).toBe(true);
+    expect(confirmParsed.data.framework_version).toBe(2);
+    expect(confirmParsed.data.current_framework_version).toBe(2);
+    expect(confirmParsed.data.active_framework_version).toBe(2);
+    expect(confirmParsed.data.affected_framework_version).toBe(2);
+    expect(confirmParsed.data.previous_active_framework_version).toBe(1);
+    expect(store.readFrameworkVersion('eng', 1).dimensions).toEqual(v1Before.dimensions);
+    expect(store.readFrameworkVersion('eng', 2).confirmed).toBe(true);
+    expect(store.readFramework('eng').framework_version).toBe(2);
+  });
+
+  it('keeps confirmed framework content immutable after creating v2', async () => {
+    store.writeConfig(makeConfig());
+
+    await handlers.recruitSetup({
+      role: 'eng',
+      dimensions: [
+        { name: 'technical', weight: 0.6, rubric: 'Tech', description: 'Tech' },
+        { name: 'culture', weight: 0.4, rubric: 'Culture', description: 'Culture' },
+      ],
+      confirm: true,
+    });
+    const v1Before = store.readFrameworkVersion('eng', 1);
+
+    await handlers.recruitSetup({
+      role: 'eng',
+      dimensions: [
+        { name: 'algo', weight: 0.5, rubric: 'Algo', description: 'Algorithms' },
+        { name: 'systems', weight: 0.5, rubric: 'Sys', description: 'Systems' },
+      ],
+      confirm: true,
+    });
+
+    expect(store.readFrameworkVersion('eng', 1).dimensions).toEqual(v1Before.dimensions);
+    expect(store.readFrameworkVersion('eng', 1).created_at).toBe(v1Before.created_at);
   });
 
   it('writes JD when provided', async () => {
@@ -455,12 +607,12 @@ describe('recruit_score', () => {
   });
 
   it('rejects if framework not confirmed', async () => {
-    const unconfirmedFw = makeFramework('test-role');
+    const unconfirmedFw = makeFramework('unconfirmed-role');
     unconfirmedFw.confirmed = false;
-    store.writeFramework('test-role', unconfirmedFw);
+    store.writeFramework('unconfirmed-role', unconfirmedFw);
 
     const result = await handlers.recruitScore({
-      role: 'test-role',
+      role: 'unconfirmed-role',
       candidate_name: 'Jane',
       email: 'jane@test.com',
       resume_markdown: '# Resume',
@@ -513,6 +665,76 @@ describe('recruit_score', () => {
 
     const candidate = store.readCandidate('test-role', parsed.data.candidate_id);
     expect(candidate.portfolio_urls).toEqual(['https://jane.dev', 'https://github.com/jane']);
+  });
+
+  it('uses the latest framework version for new candidates while old scores retain their version', async () => {
+    const oldResult = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_name: 'Old Candidate',
+      email: 'old@example.com',
+      resume_markdown: '# Old',
+      scores: {
+        technical: { score: 4, evidence: 'Good' },
+        communication: { score: 4, evidence: 'Good' },
+      },
+      approved: true,
+    });
+    const oldCandidateId = parseResult(oldResult).data.candidate_id;
+
+    await handlers.recruitSetup({
+      role: 'test-role',
+      dimensions: [
+        { name: 'technical', weight: 0.5, rubric: 'Tech skills', description: 'Technical ability' },
+        { name: 'communication', weight: 0.3, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'leadership', weight: 0.2, rubric: 'Leadership', description: 'Leadership ability' },
+      ],
+      confirm: true,
+    });
+
+    const newResult = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_name: 'New Candidate',
+      email: 'new@example.com',
+      resume_markdown: '# New',
+      scores: {
+        technical: { score: 4, evidence: 'Good' },
+        communication: { score: 4, evidence: 'Good' },
+        leadership: { score: 5, evidence: 'Led teams' },
+      },
+      approved: true,
+    });
+    const newCandidateId = parseResult(newResult).data.candidate_id;
+
+    expect(store.readCandidate('test-role', oldCandidateId).scores?.framework_version).toBe(1);
+    expect(store.readCandidate('test-role', newCandidateId).scores?.framework_version).toBe(2);
+  });
+
+  it('ignores an unconfirmed newer draft when scoring new candidates', async () => {
+    await handlers.recruitSetup({
+      role: 'test-role',
+      dimensions: [
+        { name: 'technical', weight: 0.5, rubric: 'Tech skills', description: 'Technical ability' },
+        { name: 'communication', weight: 0.3, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'leadership', weight: 0.2, rubric: 'Leadership', description: 'Leadership ability' },
+      ],
+    });
+
+    const result = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_name: 'Draft Ignored',
+      email: 'draft@example.com',
+      resume_markdown: '# Draft',
+      scores: {
+        technical: { score: 4, evidence: 'Good' },
+        communication: { score: 4, evidence: 'Good' },
+      },
+      approved: true,
+    });
+    const parsed = parseResult(result);
+
+    expect(parsed.success).toBe(true);
+    expect(store.readCandidate('test-role', parsed.data.candidate_id).scores?.framework_version).toBe(1);
+    expect(store.readFramework('test-role').framework_version).toBe(1);
   });
 });
 
@@ -850,6 +1072,67 @@ describe('recruit_evaluate', () => {
     expect(narrative).toContain('Strong candidate overall');
     expect(narrative).toContain('Bob');
   });
+
+  it('stores framework version on evaluation records', async () => {
+    const result = await handlers.recruitEvaluate({
+      role: 'test-role',
+      candidate_id: candidateId,
+      interviewer: 'Alice',
+      scores: {
+        technical: { score: 5, evidence: 'Excellent' },
+        communication: { score: 4, evidence: 'Good' },
+      },
+      input_type: 'structured',
+    });
+
+    const parsed = parseResult(result);
+    const candidate = store.readCandidate('test-role', candidateId);
+
+    expect(parsed.data.framework_version).toBe(1);
+    expect(candidate.evaluations[0].framework_version).toBe(1);
+    expect(candidate.scores?.framework_version).toBe(1);
+  });
+
+  it('uses each evaluation stored framework version when recomputing score history', async () => {
+    await handlers.recruitEvaluate({
+      role: 'test-role',
+      candidate_id: candidateId,
+      interviewer: 'Alice',
+      scores: {
+        technical: { score: 5, evidence: 'Excellent' },
+        communication: { score: 1, evidence: 'Weak' },
+      },
+      input_type: 'structured',
+    });
+
+    await handlers.recruitSetup({
+      role: 'test-role',
+      dimensions: [
+        { name: 'technical', weight: 0.2, rubric: 'Tech skills', description: 'Technical ability' },
+        { name: 'communication', weight: 0.8, rubric: 'Communication', description: 'Comm skills' },
+      ],
+      confirm: true,
+    });
+
+    const result = await handlers.recruitEvaluate({
+      role: 'test-role',
+      candidate_id: candidateId,
+      interviewer: 'Bob',
+      scores: {
+        technical: { score: 5, evidence: 'Excellent' },
+        communication: { score: 1, evidence: 'Weak' },
+      },
+      input_type: 'structured',
+    });
+    const parsed = parseResult(result);
+    const candidate = store.readCandidate('test-role', candidateId);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.framework_version).toBe(2);
+    expect(candidate.evaluations.map((evaluation) => evaluation.framework_version)).toEqual([1, 2]);
+    expect(parsed.data.overall_score).toBe(0.52);
+    expect(candidate.scores?.overall).toBe(0.52);
+  });
 });
 
 // =========================================================================
@@ -946,6 +1229,317 @@ describe('recruit_compare', () => {
 
     expect(parsed.success).toBe(true);
     expect(parsed.data.framework_dimensions).toEqual(['technical', 'communication']);
+  });
+
+  it('allows mixed weight-only-compatible versions with a normalized warning', async () => {
+    store.writeFramework('test-role', {
+      ...makeFramework('test-role'),
+      framework_version: 2,
+      dimensions: [
+        { name: 'communication', weight: 0.8, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'technical', weight: 0.2, rubric: 'Tech skills', description: 'Technical ability' },
+      ],
+    });
+    const c1 = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      name: 'V1 Candidate',
+      state: CandidateState.ScreenedPass,
+      scores: {
+        overall: 0.84,
+        framework_version: 1,
+        dimensions: {
+          technical: { score: 5, evidence: 'Great' },
+          communication: { score: 3, evidence: 'Okay' },
+        },
+      },
+    });
+    const c2 = makeCandidate({
+      candidate_id: 'C-20260414-002',
+      name: 'V2 Candidate',
+      state: CandidateState.ScreenedPass,
+      scores: {
+        overall: 0.68,
+        framework_version: 2,
+        dimensions: {
+          technical: { score: 3, evidence: 'Okay' },
+          communication: { score: 4, evidence: 'Good' },
+        },
+      },
+    });
+    store.writeCandidate('test-role', c1);
+    store.writeCandidate('test-role', c2);
+
+    const result = await handlers.recruitCompare({ role: 'test-role' });
+    const parsed = parseResult(result);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.comparison_warning.type).toBe('mixed_versions_weight_only');
+    expect(parsed.data.candidates[0].normalized_overall_score).toBe(0.76);
+    expect(parsed.data.candidates[0].comparison_score).toBe(0.76);
+  });
+
+  it('warns when all candidates are scored on old versions but the active framework changed', async () => {
+    store.writeFramework('test-role', {
+      ...makeFramework('test-role'),
+      framework_version: 2,
+      dimensions: [
+        { name: 'technical', weight: 0.5, rubric: 'Tech skills', description: 'Technical ability' },
+        { name: 'communication', weight: 0.3, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'leadership', weight: 0.2, rubric: 'Leadership', description: 'Leadership ability' },
+      ],
+    });
+    const c1 = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      name: 'V1 Candidate',
+      state: CandidateState.ScreenedPass,
+      scores: {
+        overall: 0.9,
+        framework_version: 1,
+        dimensions: {
+          technical: { score: 5, evidence: 'Great' },
+          communication: { score: 4, evidence: 'Good' },
+        },
+      },
+    });
+    store.writeCandidate('test-role', c1);
+
+    const result = await handlers.recruitCompare({ role: 'test-role' });
+    const parsed = parseResult(result);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.comparison_warning.type).toBe('mixed_versions_structural');
+    expect(parsed.data.ranking_mode).toBe('not_apples_to_apples');
+    expect(parsed.data.comparison_warning.candidate_framework_versions).toEqual([1]);
+    expect(parsed.data.comparison_warning.active_framework_version).toBe(2);
+  });
+
+  it('normalizes weight-only comparisons from stored evaluation history before candidate scores', async () => {
+    store.writeFramework('test-role', {
+      ...makeFramework('test-role'),
+      framework_version: 2,
+      dimensions: [
+        { name: 'communication', weight: 0.8, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'technical', weight: 0.2, rubric: 'Tech skills', description: 'Technical ability' },
+      ],
+    });
+    const c1 = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      name: 'History Candidate',
+      state: CandidateState.ScreenedPass,
+      scores: {
+        overall: 0.84,
+        framework_version: 1,
+        dimensions: {
+          technical: { score: 1, evidence: 'Stale aggregate' },
+          communication: { score: 1, evidence: 'Stale aggregate' },
+        },
+      },
+      evaluations: [
+        {
+          round: 1,
+          interviewer: 'Alice',
+          input_type: 'structured',
+          timestamp: new Date().toISOString(),
+          framework_version: 1,
+          scores: {
+            technical: { score: 5, evidence: 'Great' },
+            communication: { score: 3, evidence: 'Okay' },
+          },
+        },
+      ],
+    });
+    const c2 = makeCandidate({
+      candidate_id: 'C-20260414-002',
+      name: 'Active Candidate',
+      state: CandidateState.ScreenedPass,
+      scores: {
+        overall: 0.7,
+        framework_version: 2,
+        dimensions: {
+          technical: { score: 3, evidence: 'Okay' },
+          communication: { score: 4, evidence: 'Good' },
+        },
+      },
+    });
+    store.writeCandidate('test-role', c1);
+    store.writeCandidate('test-role', c2);
+
+    const result = await handlers.recruitCompare({ role: 'test-role' });
+    const parsed = parseResult(result);
+
+    expect(parsed.success).toBe(true);
+    const historyCandidate = parsed.data.candidates.find((c: { name: string }) => c.name === 'History Candidate');
+    expect(historyCandidate.normalized_overall_score).toBe(0.68);
+    expect(historyCandidate.comparison_score).toBe(0.68);
+  });
+
+  it('detects structural version drift from evaluation history even when aggregate score is current', async () => {
+    await handlers.recruitSetup({
+      role: 'test-role',
+      dimensions: [
+        { name: 'technical', weight: 0.5, rubric: 'Tech skills', description: 'Technical ability' },
+        { name: 'communication', weight: 0.3, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'leadership', weight: 0.2, rubric: 'Leadership', description: 'Leadership ability' },
+      ],
+      confirm: true,
+    });
+    const candidate = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      name: 'Mixed History Candidate',
+      state: CandidateState.ScreenedPass,
+      scores: {
+        overall: 0.74,
+        framework_version: 2,
+        dimensions: {
+          technical: { score: 3, evidence: 'Okay' },
+          communication: { score: 4, evidence: 'Good' },
+          leadership: { score: 4, evidence: 'Led teams' },
+        },
+      },
+      evaluations: [
+        {
+          round: 1,
+          interviewer: 'Alice',
+          input_type: 'structured',
+          timestamp: new Date().toISOString(),
+          framework_version: 1,
+          scores: {
+            technical: { score: 5, evidence: 'Great' },
+            communication: { score: 4, evidence: 'Good' },
+          },
+        },
+        {
+          round: 2,
+          interviewer: 'Bob',
+          input_type: 'structured',
+          timestamp: new Date().toISOString(),
+          framework_version: 2,
+          scores: {
+            technical: { score: 3, evidence: 'Okay' },
+            communication: { score: 4, evidence: 'Good' },
+            leadership: { score: 4, evidence: 'Led teams' },
+          },
+        },
+      ],
+    });
+    store.writeCandidate('test-role', candidate);
+
+    const result = await handlers.recruitCompare({ role: 'test-role' });
+    const parsed = parseResult(result);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.ranking_mode).toBe('not_apples_to_apples');
+    expect(parsed.data.comparison_warning.type).toBe('mixed_versions_structural');
+    expect(parsed.data.comparison_warning.candidate_framework_versions).toEqual([1, 2]);
+    expect(parsed.data.candidates[0].comparison_score).toBeNull();
+  });
+
+  it('normalizes weight-only mixed evaluation history against active weights', async () => {
+    store.writeFramework('test-role', {
+      ...makeFramework('test-role'),
+      framework_version: 2,
+      dimensions: [
+        { name: 'communication', weight: 0.8, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'technical', weight: 0.2, rubric: 'Tech skills', description: 'Technical ability' },
+      ],
+    });
+    const candidate = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      name: 'Weight History Candidate',
+      state: CandidateState.ScreenedPass,
+      scores: {
+        overall: 0.2,
+        framework_version: 2,
+        dimensions: {
+          technical: { score: 1, evidence: 'Stale aggregate' },
+          communication: { score: 1, evidence: 'Stale aggregate' },
+        },
+      },
+      evaluations: [
+        {
+          round: 1,
+          interviewer: 'Alice',
+          input_type: 'structured',
+          timestamp: new Date().toISOString(),
+          framework_version: 1,
+          scores: {
+            technical: { score: 5, evidence: 'Great' },
+            communication: { score: 3, evidence: 'Okay' },
+          },
+        },
+        {
+          round: 2,
+          interviewer: 'Bob',
+          input_type: 'structured',
+          timestamp: new Date().toISOString(),
+          framework_version: 2,
+          scores: {
+            technical: { score: 1, evidence: 'Weak' },
+            communication: { score: 5, evidence: 'Excellent' },
+          },
+        },
+      ],
+    });
+    store.writeCandidate('test-role', candidate);
+
+    const result = await handlers.recruitCompare({ role: 'test-role' });
+    const parsed = parseResult(result);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.ranking_mode).toBe('normalized_weight_only');
+    expect(parsed.data.comparison_warning.type).toBe('mixed_versions_weight_only');
+    expect(parsed.data.candidates[0].normalized_overall_score).toBe(0.76);
+    expect(parsed.data.candidates[0].comparison_score).toBe(0.76);
+  });
+
+  it('warns strongly on mixed structurally different versions without ranking as apples-to-apples', async () => {
+    await handlers.recruitSetup({
+      role: 'test-role',
+      dimensions: [
+        { name: 'technical', weight: 0.5, rubric: 'Tech skills', description: 'Technical ability' },
+        { name: 'communication', weight: 0.3, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'leadership', weight: 0.2, rubric: 'Leadership', description: 'Leadership ability' },
+      ],
+      confirm: true,
+    });
+    const c1 = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      name: 'V1 Candidate',
+      state: CandidateState.ScreenedPass,
+      scores: {
+        overall: 0.9,
+        framework_version: 1,
+        dimensions: {
+          technical: { score: 5, evidence: 'Great' },
+          communication: { score: 4, evidence: 'Good' },
+        },
+      },
+    });
+    const c2 = makeCandidate({
+      candidate_id: 'C-20260414-002',
+      name: 'V2 Candidate',
+      state: CandidateState.ScreenedPass,
+      scores: {
+        overall: 0.7,
+        framework_version: 2,
+        dimensions: {
+          technical: { score: 3, evidence: 'Okay' },
+          communication: { score: 4, evidence: 'Good' },
+          leadership: { score: 4, evidence: 'Led teams' },
+        },
+      },
+    });
+    store.writeCandidate('test-role', c1);
+    store.writeCandidate('test-role', c2);
+
+    const result = await handlers.recruitCompare({ role: 'test-role' });
+    const parsed = parseResult(result);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.comparison_warning.type).toBe('mixed_versions_structural');
+    expect(parsed.data.ranking_mode).toBe('not_apples_to_apples');
+    expect(parsed.data.comparison_warning.message).toContain('re-score');
+    expect(parsed.data.candidates[0].comparison_score).toBeNull();
   });
 });
 
@@ -1141,7 +1735,7 @@ describe('recruit_save_research_cards', () => {
     const candidateAfter = store.readCandidate('test-role', 'C-20260414-010');
     expect(candidateAfter.state).toBe(CandidateState.ScreenedPass);
     expect(candidateAfter.pending_action).toBe('Schedule interview');
-    expect(candidateAfter.scores).toEqual({ overall: 0.8, dimensions: {} });
+    expect(candidateAfter.scores).toEqual({ overall: 0.8, dimensions: {}, framework_version: 1 });
     expect(candidateAfter.timeline).toHaveLength(1);
   });
 
@@ -1391,6 +1985,156 @@ describe('recruit_status', () => {
     expect(parsed.data.overview['test-role']).toBeDefined();
     expect(parsed.data.overview['test-role'][CandidateState.ScreenedPass].length).toBe(1);
     expect(parsed.data.overview['test-role'][CandidateState.Scheduling].length).toBe(1);
+  });
+
+  it('overview: distinguishes weight-only-compatible mixed framework versions', async () => {
+    store.writeFramework('test-role', {
+      ...makeFramework('test-role'),
+      framework_version: 2,
+      dimensions: [
+        { name: 'communication', weight: 0.8, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'technical', weight: 0.2, rubric: 'Tech skills', description: 'Technical ability' },
+      ],
+    });
+    const c1 = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      state: CandidateState.ScreenedPass,
+      scores: { overall: 0.8, framework_version: 1, dimensions: {} },
+    });
+    const c2 = makeCandidate({
+      candidate_id: 'C-20260414-002',
+      state: CandidateState.ScreenedPass,
+      scores: { overall: 0.7, framework_version: 2, dimensions: {} },
+    });
+    store.writeCandidate('test-role', c1);
+    store.writeCandidate('test-role', c2);
+
+    const result = await handlers.recruitStatus({
+      query_type: 'overview',
+      role: 'test-role',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.framework_versions['test-role']).toEqual({ active: 2, candidate_score_versions: [1, 2] });
+    expect(parsed.data.version_warnings['test-role'].type).toBe('mixed_versions_weight_only');
+  });
+
+  it('overview: distinguishes structurally different mixed framework versions', async () => {
+    store.writeFramework('test-role', {
+      ...makeFramework('test-role'),
+      framework_version: 2,
+      dimensions: [
+        { name: 'technical', weight: 0.5, rubric: 'Tech skills', description: 'Technical ability' },
+        { name: 'communication', weight: 0.3, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'leadership', weight: 0.2, rubric: 'Leadership', description: 'Leadership ability' },
+      ],
+    });
+    const c1 = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      state: CandidateState.ScreenedPass,
+      scores: { overall: 0.8, framework_version: 1, dimensions: {} },
+    });
+    const c2 = makeCandidate({
+      candidate_id: 'C-20260414-002',
+      state: CandidateState.ScreenedPass,
+      scores: { overall: 0.7, framework_version: 2, dimensions: {} },
+    });
+    store.writeCandidate('test-role', c1);
+    store.writeCandidate('test-role', c2);
+
+    const result = await handlers.recruitStatus({
+      query_type: 'overview',
+      role: 'test-role',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.version_warnings['test-role'].type).toBe('mixed_versions_structural');
+  });
+
+  it('overview: compares old candidate score versions against the active framework for structural drift', async () => {
+    store.writeFramework('test-role', {
+      ...makeFramework('test-role'),
+      framework_version: 2,
+      dimensions: [
+        { name: 'technical', weight: 0.5, rubric: 'Tech skills', description: 'Technical ability' },
+        { name: 'communication', weight: 0.3, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'leadership', weight: 0.2, rubric: 'Leadership', description: 'Leadership ability' },
+      ],
+    });
+    store.writeCandidate('test-role', makeCandidate({
+      candidate_id: 'C-20260414-001',
+      state: CandidateState.ScreenedPass,
+      scores: { overall: 0.8, framework_version: 1, dimensions: {} },
+    }));
+    store.writeCandidate('test-role', makeCandidate({
+      candidate_id: 'C-20260414-002',
+      state: CandidateState.ScreenedPass,
+      scores: { overall: 0.7, framework_version: 1, dimensions: {} },
+    }));
+
+    const result = await handlers.recruitStatus({
+      query_type: 'overview',
+      role: 'test-role',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.framework_versions['test-role']).toEqual({ active: 2, candidate_score_versions: [1] });
+    expect(parsed.data.version_warnings['test-role'].type).toBe('mixed_versions_structural');
+  });
+
+  it('overview: includes evaluation history versions in framework warnings', async () => {
+    store.writeFramework('test-role', {
+      ...makeFramework('test-role'),
+      framework_version: 2,
+      dimensions: [
+        { name: 'technical', weight: 0.5, rubric: 'Tech skills', description: 'Technical ability' },
+        { name: 'communication', weight: 0.3, rubric: 'Communication', description: 'Comm skills' },
+        { name: 'leadership', weight: 0.2, rubric: 'Leadership', description: 'Leadership ability' },
+      ],
+    });
+    store.writeCandidate('test-role', makeCandidate({
+      candidate_id: 'C-20260414-001',
+      state: CandidateState.ScreenedPass,
+      scores: { overall: 0.7, framework_version: 2, dimensions: {} },
+      evaluations: [
+        {
+          round: 1,
+          interviewer: 'Alice',
+          input_type: 'structured',
+          timestamp: new Date().toISOString(),
+          framework_version: 1,
+          scores: {
+            technical: { score: 5, evidence: 'Great' },
+            communication: { score: 4, evidence: 'Good' },
+          },
+        },
+        {
+          round: 2,
+          interviewer: 'Bob',
+          input_type: 'structured',
+          timestamp: new Date().toISOString(),
+          framework_version: 2,
+          scores: {
+            technical: { score: 3, evidence: 'Okay' },
+            communication: { score: 4, evidence: 'Good' },
+            leadership: { score: 4, evidence: 'Led teams' },
+          },
+        },
+      ],
+    }));
+
+    const result = await handlers.recruitStatus({
+      query_type: 'overview',
+      role: 'test-role',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.framework_versions['test-role']).toEqual({ active: 2, candidate_score_versions: [1, 2] });
+    expect(parsed.data.version_warnings['test-role'].type).toBe('mixed_versions_structural');
   });
 
   it('candidate: returns full detail', async () => {

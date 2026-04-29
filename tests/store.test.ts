@@ -10,6 +10,7 @@ import {
   CandidateNotFoundError,
   IllegalTransitionError,
   ApprovalRequiredError,
+  ValidationError,
 } from '../src/store.js';
 
 import {
@@ -142,6 +143,211 @@ describe('Framework CRUD', () => {
     const read = store.readFramework('senior-engineer');
     expect(read.role).toBe('senior-engineer');
     expect(read.dimensions).toHaveLength(2);
+  });
+
+  it('migrates an unversioned framework to version 1', () => {
+    const fw = makeFramework();
+    store.writeFramework('senior-engineer', fw);
+
+    const read = store.readFramework('senior-engineer');
+
+    expect(read.framework_version).toBe(1);
+    expect(read.active).toBe(true);
+    expect(store.listFrameworkVersions('senior-engineer').map((v) => v.framework_version)).toEqual([1]);
+  });
+
+  it('durably backfills a legacy unversioned framework fixture when read', () => {
+    const fwPath = path.join(tmpDir, 'roles', 'legacy-role', 'framework.json');
+    fs.mkdirSync(path.dirname(fwPath), { recursive: true });
+    fs.writeFileSync(fwPath, JSON.stringify({
+      schema_version: 1,
+      role: 'legacy-role',
+      role_display: 'Legacy Role',
+      dimensions: [
+        { name: 'technical', weight: 0.5, rubric: 'Tech', description: 'Tech' },
+        { name: 'culture', weight: 0.5, rubric: 'Culture', description: 'Culture' },
+      ],
+      confirmed: true,
+      created_at: '2026-04-01T00:00:00.000Z',
+    }, null, 2));
+
+    const read = store.readFramework('legacy-role');
+    const persisted = JSON.parse(fs.readFileSync(fwPath, 'utf-8'));
+
+    expect(read.framework_version).toBe(1);
+    expect(read.active).toBe(true);
+    expect(persisted.framework_version).toBe(1);
+    expect(persisted.active).toBe(true);
+  });
+
+  it('persists only the latest confirmed framework version as active', () => {
+    store.writeFramework('senior-engineer', {
+      ...makeFramework(),
+      role: 'senior-engineer',
+      confirmed: true,
+      framework_version: 1,
+    });
+    store.writeFramework('senior-engineer', {
+      ...makeFramework(),
+      role: 'senior-engineer',
+      confirmed: true,
+      framework_version: 2,
+      dimensions: [
+        { name: 'technical', weight: 0.7 },
+        { name: 'culture', weight: 0.3 },
+      ],
+    });
+
+    const v1 = store.readFrameworkVersion('senior-engineer', 1);
+    const v2 = store.readFrameworkVersion('senior-engineer', 2);
+    const persistedV1 = JSON.parse(fs.readFileSync(path.join(tmpDir, 'roles', 'senior-engineer', 'framework.json'), 'utf-8'));
+    const persistedV2 = JSON.parse(fs.readFileSync(path.join(tmpDir, 'roles', 'senior-engineer', 'frameworks', 'v2.json'), 'utf-8'));
+
+    expect(v1.active).toBe(false);
+    expect(v2.active).toBe(true);
+    expect(persistedV1.active).toBe(false);
+    expect(persistedV2.active).toBe(true);
+  });
+
+  it('blocks content mutation of a confirmed framework version', () => {
+    store.writeFramework('senior-engineer', {
+      ...makeFramework(),
+      role: 'senior-engineer',
+      role_display: 'Senior Engineer',
+      confirmed: true,
+      framework_version: 1,
+      created_at: '2026-04-01T00:00:00.000Z',
+    });
+
+    expect(() => store.writeFramework('senior-engineer', {
+      ...makeFramework(),
+      role: 'senior-engineer',
+      role_display: 'Senior Engineer',
+      confirmed: true,
+      framework_version: 1,
+      created_at: '2026-04-01T00:00:00.000Z',
+      dimensions: [
+        { name: 'technical', weight: 0.7 },
+        { name: 'culture', weight: 0.3 },
+      ],
+    })).toThrow(ValidationError);
+
+    expect(store.readFrameworkVersion('senior-engineer', 1).dimensions).toEqual(makeFramework().dimensions);
+  });
+
+  it('allows metadata-only writes for a confirmed framework version', () => {
+    store.writeFramework('senior-engineer', {
+      ...makeFramework(),
+      role: 'senior-engineer',
+      role_display: 'Senior Engineer',
+      confirmed: true,
+      framework_version: 1,
+      active: true,
+      created_at: '2026-04-01T00:00:00.000Z',
+    });
+
+    store.writeFramework('senior-engineer', {
+      ...makeFramework(),
+      role: 'senior-engineer',
+      role_display: 'Senior Engineer Display Backfill',
+      confirmed: true,
+      framework_version: 1,
+      active: false,
+      created_at: '2026-04-01T00:00:00.000Z',
+    });
+
+    const read = store.readFrameworkVersion('senior-engineer', 1);
+    expect(read.role_display).toBe('Senior Engineer Display Backfill');
+    expect(read.dimensions).toEqual(makeFramework().dimensions);
+  });
+
+  it('allows same-version metadata backfill for confirmed frameworks without changing immutable content', () => {
+    store.writeFramework('senior-engineer', {
+      ...makeFramework(),
+      role: 'senior-engineer',
+      role_display: 'Senior Engineer',
+      confirmed: true,
+      framework_version: 1,
+      active: true,
+      created_at: '2026-04-01T00:00:00.000Z',
+    });
+    const before = store.readFrameworkVersion('senior-engineer', 1);
+
+    store.writeFramework('senior-engineer', {
+      ...before,
+      role_display: 'Senior Engineer Display Backfill',
+      active: false,
+    });
+
+    const read = store.readFrameworkVersion('senior-engineer', 1);
+    expect(read.role_display).toBe('Senior Engineer Display Backfill');
+    expect(read.dimensions).toEqual(before.dimensions);
+    expect(read.confirmed).toBe(before.confirmed);
+    expect(read.created_at).toBe(before.created_at);
+  });
+
+  it('backfills unversioned candidate scores and evaluations to framework version 1', () => {
+    const candidate = makeCandidate({
+      scores: {
+        overall: 0.8,
+        dimensions: {
+          technical: { score: 4, evidence: 'Good' },
+          culture: { score: 4, evidence: 'Good' },
+        },
+      },
+      evaluations: [
+        {
+          round: 1,
+          interviewer: 'Alice',
+          scores: {
+            technical: { score: 4, evidence: 'Good' },
+            culture: { score: 4, evidence: 'Good' },
+          },
+          input_type: 'structured',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+    store.writeCandidate('test-role', candidate);
+
+    const read = store.readCandidate('test-role', 'C-20260414-001');
+
+    expect(read.scores?.framework_version).toBe(1);
+    expect(read.evaluations[0].framework_version).toBe(1);
+  });
+
+  it('durably backfills legacy unversioned candidate scores and evaluations when read', () => {
+    const candidatePath = path.join(tmpDir, 'roles', 'test-role', 'candidates', 'C-20260414-001.json');
+    fs.mkdirSync(path.dirname(candidatePath), { recursive: true });
+    fs.writeFileSync(candidatePath, JSON.stringify(makeCandidate({
+      scores: {
+        overall: 0.8,
+        dimensions: {
+          technical: { score: 4, evidence: 'Good' },
+          culture: { score: 4, evidence: 'Good' },
+        },
+      } as Candidate['scores'],
+      evaluations: [
+        {
+          round: 1,
+          interviewer: 'Alice',
+          scores: {
+            technical: { score: 4, evidence: 'Good' },
+            culture: { score: 4, evidence: 'Good' },
+          },
+          input_type: 'structured',
+          timestamp: new Date().toISOString(),
+        } as Candidate['evaluations'][number],
+      ],
+    }), null, 2));
+
+    const read = store.readCandidate('test-role', 'C-20260414-001');
+    const persisted = JSON.parse(fs.readFileSync(candidatePath, 'utf-8'));
+
+    expect(read.scores?.framework_version).toBe(1);
+    expect(read.evaluations[0].framework_version).toBe(1);
+    expect(persisted.scores.framework_version).toBe(1);
+    expect(persisted.evaluations[0].framework_version).toBe(1);
   });
 });
 

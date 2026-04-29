@@ -171,6 +171,8 @@ export interface Framework {
   dimensions: Dimension[];
   confirmed: boolean;
   created_at: string;
+  framework_version: number;
+  active: boolean;
 }
 
 export interface DimensionScore {
@@ -184,6 +186,7 @@ export interface Evaluation {
   scores: Record<string, DimensionScore>;
   input_type: 'free_form' | 'structured' | 'rubric_based';
   timestamp: string;
+  framework_version: number;
 }
 
 export interface TimelineEntry {
@@ -258,7 +261,7 @@ export interface Candidate {
   state_updated: string;
   pending_action: string;
   conversation_id: string;
-  scores: { overall: number; dimensions: Record<string, DimensionScore> } | null;
+  scores: { overall: number; dimensions: Record<string, DimensionScore>; framework_version: number } | null;
   evaluations: Evaluation[];
   offered_slots: OfferedSlot[];
   portfolio_urls?: string[];   // V2: candidate portfolio/website URLs for automated evaluation
