@@ -2,7 +2,7 @@ import { CandidateState } from './models.js';
 import type { Candidate, Config, OfferedSlot, TimeoutRule } from './models.js';
 import type { RecruiterStore } from './store.js';
 import type { RecruiterMailClient } from './emailClient.js';
-import { appendSignature, generateFollowupBody } from './emailComposer.js';
+import { appendSignature, candidateFacingCc, candidateFacingFrom, generateFollowupBody } from './emailComposer.js';
 
 export interface TimeoutExecutionResult {
   candidate_id: string;
@@ -74,7 +74,7 @@ export async function executeAutoFollowup(
     to: candidate.channels.email,
     subject,
     text: fullBody,
-    cc: [config.cc_email],
+    cc: candidateFacingCc(config),
   });
 
   // Record outbound message in conversation
@@ -82,9 +82,9 @@ export async function executeAutoFollowup(
     schema_version: 1,
     message_id: emailResult.messageId,
     direction: 'outbound',
-    from: config.cc_email,
+    from: candidateFacingFrom(config),
     to: [candidate.channels.email],
-    cc: [config.cc_email],
+    cc: candidateFacingCc(config),
     subject,
     body: fullBody,
     timestamp: new Date().toISOString(),

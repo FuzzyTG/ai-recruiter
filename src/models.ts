@@ -142,6 +142,16 @@ export const TIMEOUT_RULES: readonly TimeoutRule[] = [
 // Data interfaces
 // ---------------------------------------------------------------------------
 
+export interface CoordinatorIdentity {
+  name: string;
+  display_name: string;
+  email_local_part: string;
+}
+
+export interface CommunicationConfig {
+  coordinator: CoordinatorIdentity;
+}
+
 export interface Config {
   schema_version: number;
   hm_name: string;
@@ -149,6 +159,8 @@ export interface Config {
   sender_name: string;
   cc_email: string;
   agentmail_inbox_id: string;
+  agentmail_inbox_email?: string;
+  communication?: CommunicationConfig;
   calendar_url: string;
   meeting_link: string;
   signature_template: string;

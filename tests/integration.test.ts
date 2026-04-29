@@ -679,7 +679,7 @@ describe('Integration: full hiring pipeline', () => {
     expect(send.message).toContain('email_body is required');
   });
 
-  it('sender_name defaults to AI Assistant', async () => {
+  it('coordinator identity defaults from AI Assistant', async () => {
     await handlers.recruitSetup({
       hm_name: 'Quan',
       company_name: 'Acme Corp',
@@ -690,21 +690,25 @@ describe('Integration: full hiring pipeline', () => {
     });
 
     const config = store.readConfig();
-    expect(config.sender_name).toBe('AI Assistant');
+    expect(config.sender_name).toBe('AI Assistant, AI Recruiting Coordinator');
+    expect(config.communication?.coordinator).toEqual({
+      name: 'AI Assistant',
+      display_name: 'AI Assistant, AI Recruiting Coordinator',
+      email_local_part: 'ai.assistant',
+    });
 
-    // createInbox should have been called with 'AI Assistant'
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'AI Assistant',
+      'AI Assistant, AI Recruiting Coordinator',
       'quan',
-      undefined,
+      'ai.assistant',
     );
   });
 
-  it('sender_name can be overridden', async () => {
+  it('coordinator_name can be overridden', async () => {
     await handlers.recruitSetup({
       hm_name: 'Quan',
       company_name: 'Acme Corp',
-      sender_name: 'Acme Talent Team',
+      coordinator_name: 'Acme Talent Team',
       cc_email: 'quan@acme.com',
       timezone: 'UTC',
       language: 'en',
@@ -712,12 +716,12 @@ describe('Integration: full hiring pipeline', () => {
     });
 
     const config = store.readConfig();
-    expect(config.sender_name).toBe('Acme Talent Team');
+    expect(config.sender_name).toBe('Acme Talent Team, AI Recruiting Coordinator');
 
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'Acme Talent Team',
+      'Acme Talent Team, AI Recruiting Coordinator',
       'quan',
-      undefined,
+      'acme.talent.team',
     );
   });
 
@@ -819,18 +823,17 @@ describe('Integration: full hiring pipeline', () => {
       role: ROLE,
     });
 
-    expect(store.readConfig().sender_name).toBe('AI Assistant');
+    expect(store.readConfig().sender_name).toBe('AI Assistant, AI Recruiting Coordinator');
 
-    // Update sender_name
     await handlers.recruitSetup({
-      sender_name: 'Acme Talent Team',
+      coordinator_name: 'Acme Talent Team',
       role: ROLE,
     });
 
-    expect(store.readConfig().sender_name).toBe('Acme Talent Team');
+    expect(store.readConfig().sender_name).toBe('Acme Talent Team, AI Recruiting Coordinator');
     expect(emailClient.updateInbox).toHaveBeenCalledWith(
       'inbox-001',
-      { displayName: 'Acme Talent Team' },
+      { displayName: 'Acme Talent Team, AI Recruiting Coordinator' },
     );
   });
 });

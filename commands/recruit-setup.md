@@ -22,7 +22,7 @@ description: Set up recruiting config, evaluation framework, and job description
 
 ### Step 0: AgentMail API Key Check
 
-**[LLM]** Call `recruit_status({ query_type: "overview" })`. Check two things: (1) whether `agentmail_inbox_id` exists in the config, and (2) whether the response indicates the API key is available (look for `agentmail_key_configured: true`). If the inbox exists **and** the key is configured, email is fully set up — proceed according to Dependency Guard routing (Step 1 for fresh installs, Step 3 for existing configs). If the inbox exists but the key is missing, tell HM: "Your inbox is set up but the API key is no longer available. Please provide it again." Ask for the key and pass it as `agentmail_api_key` in the `recruit_setup` call in Step 2. If neither exists, this is a fresh install — ask HM for their AgentMail API key (get one at https://agentmail.to) and pass it as `agentmail_api_key` in Step 2. Do not store it yourself — the tool handles credential storage.
+**[LLM]** Call `recruit_status({ query_type: "overview" })`. Check two things: (1) whether the response indicates an inbox is configured (look for `agentmail_inbox_configured: true`), and (2) whether the response indicates the API key is available (look for `agentmail_key_configured: true`). If the inbox is configured **and** the key is configured, email is fully set up — proceed according to Dependency Guard routing (Step 1 for fresh installs, Step 3 for existing configs). If the inbox is configured but the key is missing, tell HM: "Your inbox is set up but the API key is no longer available. Please provide it again." Ask for the key and pass it as `agentmail_api_key` in the `recruit_setup` call in Step 2. If neither exists, this is a fresh install — ask HM for their AgentMail API key (get one at https://agentmail.to) and pass it as `agentmail_api_key` in Step 2. Do not store it yourself — the tool handles credential storage.
 
 ### Step 1: Collect Config (first-time only)
 
@@ -32,12 +32,13 @@ description: Set up recruiting config, evaluation framework, and job description
 |-------|----------|---------|
 | `hm_name` | Yes | "Alex Yuan" |
 | `company_name` | Yes | "Acme Corp" |
+| `coordinator_name` | No | "Grace". Defaults to "AI Assistant" if omitted. |
 | `cc_email` | Yes | "alex@acme.com" |
 | `timezone` | Yes | "Asia/Shanghai" |
 | `language` | Yes | "zh" or "en" |
 | `calendar_url` | **Recommended** | iCal feed URL (.ics). Without this, `/recruit-schedule` cannot find free slots. |
 | `meeting_link` | No | Zoom/Meet/Teams link |
-| `inbox_username` | No | Local part for recruiting inbox (e.g., "quan-interview" → quan-interview@agentmail.to). If omitted, a random name is generated. |
+| `inbox_username` | No | Local part for recruiting inbox (e.g., "quan-interview" → quan-interview@agentmail.to). If omitted, defaults to the normalized coordinator name. |
 
 Collect conversationally. Don't dump the table — ask naturally. For `calendar_url` and `meeting_link`, explain why they matter: without a calendar URL, the agent cannot find free interview slots. If HM doesn't have one yet, acknowledge and warn that `/recruit-schedule` will not work until it's added.
 
@@ -61,7 +62,7 @@ Then ask: "Want to update any of these, or proceed to set up a new role?" If HM 
 
 ### Step 2: Create Config
 
-**[MCP]** Call `recruit_setup` with config fields + `role` (include `inbox_username` if HM provided one).
+**[MCP]** Call `recruit_setup` with config fields + `role` (include `coordinator_name` and `inbox_username` if HM provided them).
 
 Verify response: `config_created: true`. If `inbox_email` is returned, show it to HM — this is the AgentMail address for outbound recruiting emails.
 

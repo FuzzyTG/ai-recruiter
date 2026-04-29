@@ -14,6 +14,7 @@ export function registerRecruitingTools(server: McpServer, handlers: Handlers): 
       hm_name: z.string().optional(),
       company_name: z.string().optional(),
       sender_name: z.string().optional(),
+      coordinator_name: z.string().optional(),
       cc_email: z.string().optional(),
       calendar_url: z.string().optional(),
       meeting_link: z.string().optional(),

@@ -1,5 +1,43 @@
-import { CandidateState } from './models.js';
-import type { Candidate, Config, TimeoutRule } from './models.js';
+import { CandidateState, slugify } from './models.js';
+import type { Candidate, Config, CoordinatorIdentity, TimeoutRule } from './models.js';
+
+export function normalizeCoordinatorLocalPart(name: string): string {
+  const normalized = slugify(name)
+    .replace(/-/g, '.')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^\.|\.$/g, '');
+  return normalized || 'coordinator';
+}
+
+export function coordinatorIdentity(name: string): CoordinatorIdentity {
+  const trimmedName = name.trim();
+  const safeName = trimmedName || 'AI Assistant';
+  return {
+    name: safeName,
+    display_name: `${safeName}, AI Recruiting Coordinator`,
+    email_local_part: normalizeCoordinatorLocalPart(safeName),
+  };
+}
+
+export function candidateFacingCc(config: Config): string[] {
+  return [config.cc_email];
+}
+
+export function quoteDisplayName(displayName: string): string {
+  const escapedName = displayName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `"${escapedName}"`;
+}
+
+export function formatAddress(displayName: string, email: string): string {
+  return `${quoteDisplayName(displayName)} <${email}>`;
+}
+
+export function candidateFacingFrom(config: Config): string {
+  const displayName = config.communication?.coordinator.display_name ?? config.sender_name;
+  const email = config.agentmail_inbox_email;
+  if (email) return formatAddress(displayName, email);
+  return config.communication?.coordinator ? quoteDisplayName(displayName) : config.cc_email;
+}
 
 /** Parse email address from RFC 5322 format ("Name <email>") or plain email. */
 export function parseEmailAddress(raw: string): string {

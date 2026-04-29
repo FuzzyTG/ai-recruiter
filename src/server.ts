@@ -35,6 +35,9 @@ import {
 import { validateResearchCards } from './researchCards.js';
 import {
   appendSignature,
+  candidateFacingCc,
+  candidateFacingFrom,
+  coordinatorIdentity,
   generateFollowupBody,
   parseEmailAddress,
   stripTrailingSignature,
@@ -176,6 +179,7 @@ export function createHandlers(deps: ServerDeps) {
     hm_name?: string;
     company_name?: string;
     sender_name?: string;
+    coordinator_name?: string;
     cc_email?: string;
     calendar_url?: string;
     meeting_link?: string;
@@ -255,12 +259,12 @@ export function createHandlers(deps: ServerDeps) {
         }
 
         let agentmail_inbox_id = '';
-        const senderName = args.sender_name ?? 'AI Assistant';
+        const coordinator = coordinatorIdentity(args.coordinator_name ?? args.sender_name ?? 'AI Assistant');
         if (getApiKey() && getEmailClient()) {
           const inbox = await getEmailClient()!.createInbox(
-            senderName,
+            coordinator.display_name,
             slugify(args.hm_name!),
-            args.inbox_username,
+            args.inbox_username ?? coordinator.email_local_part,
           );
           agentmail_inbox_id = inbox.inboxId;
           inbox_email = inbox.email;
@@ -270,12 +274,16 @@ export function createHandlers(deps: ServerDeps) {
           schema_version: 1,
           hm_name: args.hm_name!,
           company_name: args.company_name!,
-          sender_name: senderName,
+          sender_name: coordinator.display_name,
           cc_email: args.cc_email!,
           agentmail_inbox_id,
+          agentmail_inbox_email: inbox_email,
+          communication: {
+            coordinator,
+          },
           calendar_url: args.calendar_url ?? '',
           meeting_link: args.meeting_link ?? '',
-          signature_template: `—${args.hm_name}\n\n---\nThis interview is coordinated by an AI assistant.\nFor direct contact: ${args.cc_email}`,
+          signature_template: `—${coordinator.display_name}\n\n---\nThis interview is coordinated by an AI assistant.\nFor direct contact: ${args.cc_email}`,
           timezone: args.timezone!,
           language: args.language!,
           created_at: new Date().toISOString(),
@@ -284,7 +292,7 @@ export function createHandlers(deps: ServerDeps) {
         config_created = true;
       } else {
         // Step 1b: Config update — patch provided fields on existing config
-        const updatableFields = ['calendar_url', 'meeting_link', 'cc_email', 'timezone', 'language', 'sender_name'] as const;
+        const updatableFields = ['calendar_url', 'meeting_link', 'cc_email', 'timezone', 'language'] as const;
         const existing = store.readConfig();
         for (const field of updatableFields) {
           if (args[field] !== undefined && args[field] !== existing[field]) {
@@ -292,19 +300,40 @@ export function createHandlers(deps: ServerDeps) {
             config_updated = true;
           }
         }
-        if (config_updated) {
-          store.writeConfig(existing);
-
-          // If sender_name changed, update the existing AgentMail inbox display name
-          if (args.sender_name !== undefined && existing.agentmail_inbox_id && getEmailClient()) {
-            try {
-              await getEmailClient()!.updateInbox(existing.agentmail_inbox_id, {
-                displayName: args.sender_name,
-              });
-            } catch {
-              // Non-fatal: config is saved, inbox update is best-effort
-            }
+        const hadAgentMailInbox = !!existing.agentmail_inbox_id;
+        const coordinatorName = args.coordinator_name ?? args.sender_name;
+        if (coordinatorName !== undefined) {
+          const coordinator = coordinatorIdentity(coordinatorName);
+          if (JSON.stringify(existing.communication?.coordinator) !== JSON.stringify(coordinator)) {
+            existing.sender_name = coordinator.display_name;
+            existing.communication = {
+              coordinator,
+            };
+            existing.signature_template = `—${coordinator.display_name}\n\n---\nThis interview is coordinated by an AI assistant.\nFor direct contact: ${existing.cc_email}`;
+            config_updated = true;
           }
+        }
+        if (!existing.agentmail_inbox_id && getApiKey() && getEmailClient()) {
+          const coordinator = existing.communication?.coordinator ?? coordinatorIdentity(existing.sender_name);
+          const inbox = await getEmailClient()!.createInbox(
+            coordinator.display_name,
+            slugify(existing.hm_name),
+            args.inbox_username ?? coordinator.email_local_part,
+          );
+          existing.agentmail_inbox_id = inbox.inboxId;
+          existing.agentmail_inbox_email = inbox.email;
+          inbox_email = inbox.email;
+          config_updated = true;
+        }
+
+        if (config_updated) {
+          if (coordinatorName !== undefined && hadAgentMailInbox && getEmailClient()) {
+            await getEmailClient()!.updateInbox(existing.agentmail_inbox_id, {
+              displayName: existing.sender_name,
+            });
+          }
+
+          store.writeConfig(existing);
         }
       }
 
@@ -676,7 +705,7 @@ export function createHandlers(deps: ServerDeps) {
             to: candidate.channels.email,
             subject: args.email_subject ?? `Interview Scheduling: ${args.role}`,
             text: fullBody,
-            cc: [config.cc_email],
+            cc: candidateFacingCc(config),
           });
           messageId = emailResult.messageId;
           threadId = emailResult.threadId;
@@ -686,9 +715,9 @@ export function createHandlers(deps: ServerDeps) {
             schema_version: 1,
             message_id: messageId,
             direction: 'outbound',
-            from: config.cc_email,
+            from: candidateFacingFrom(config),
             to: [candidate.channels.email],
-            cc: [config.cc_email],
+            cc: candidateFacingCc(config),
             subject: args.email_subject ?? `Interview Scheduling: ${args.role}`,
             body: fullBody,
             timestamp: now,
@@ -758,8 +787,8 @@ export function createHandlers(deps: ServerDeps) {
           summary: `Interview: ${candidate.name} - ${args.role}`,
           description: `Confirmed interview with ${candidate.name} for ${args.role}`,
           location: config.meeting_link,
-          organizerEmail: config.agentmail_inbox_id,
-          organizerName: config.sender_name ?? config.hm_name,
+          organizerEmail: config.agentmail_inbox_email ?? config.agentmail_inbox_id,
+          organizerName: config.communication?.coordinator.display_name ?? config.sender_name ?? config.hm_name,
           attendeeEmail: candidate.channels.email,
           attendeeName: candidate.name,
           uid: icsUid,
@@ -777,7 +806,7 @@ export function createHandlers(deps: ServerDeps) {
             to: candidate.channels.email,
             subject: args.email_subject ?? `Interview Confirmed: ${args.role}`,
             text: confirmBody,
-            cc: [config.cc_email],
+            cc: candidateFacingCc(config),
             attachments: [attachment],
           });
           messageId = emailResult.messageId;
@@ -787,9 +816,9 @@ export function createHandlers(deps: ServerDeps) {
             schema_version: 1,
             message_id: emailResult.messageId,
             direction: 'outbound',
-            from: config.cc_email,
+            from: candidateFacingFrom(config),
             to: [candidate.channels.email],
-            cc: [config.cc_email],
+            cc: candidateFacingCc(config),
             subject: args.email_subject ?? `Interview Confirmed: ${args.role}`,
             body: confirmBody,
             timestamp: new Date().toISOString(),
@@ -901,8 +930,8 @@ export function createHandlers(deps: ServerDeps) {
               start: new Date(candidate.confirmed_interview.start),
               end: new Date(candidate.confirmed_interview.end),
               summary: `Interview: ${candidate.name} - ${args.role}`,
-              organizerEmail: config.agentmail_inbox_id,
-              organizerName: config.sender_name ?? config.hm_name,
+              organizerEmail: config.agentmail_inbox_email ?? config.agentmail_inbox_id,
+              organizerName: config.communication?.coordinator.display_name ?? config.sender_name ?? config.hm_name,
               attendeeEmail: candidate.channels.email,
               attendeeName: candidate.name,
               timezone: config.timezone,
@@ -928,7 +957,7 @@ export function createHandlers(deps: ServerDeps) {
             to: candidate.channels.email,
             subject: args.email_subject ?? `Interview Cancelled: ${args.role}`,
             text: cancelBody,
-            cc: [config.cc_email],
+            cc: candidateFacingCc(config),
             attachments: attachments.length > 0 ? attachments : undefined,
           });
           messageId = emailResult.messageId;
@@ -938,9 +967,9 @@ export function createHandlers(deps: ServerDeps) {
             schema_version: 1,
             message_id: emailResult.messageId,
             direction: 'outbound',
-            from: config.cc_email,
+            from: candidateFacingFrom(config),
             to: [candidate.channels.email],
-            cc: [config.cc_email],
+            cc: candidateFacingCc(config),
             subject: args.email_subject ?? `Interview Cancelled: ${args.role}`,
             body: cancelBody,
             timestamp: new Date().toISOString(),
@@ -1038,7 +1067,7 @@ export function createHandlers(deps: ServerDeps) {
             to: candidate.channels.email,
             subject: args.email_subject ?? `Homework Assignment: ${args.role}`,
             text: homeworkBody,
-            cc: [config.cc_email],
+            cc: candidateFacingCc(config),
           });
           messageId = emailResult.messageId;
 
@@ -1047,9 +1076,9 @@ export function createHandlers(deps: ServerDeps) {
             schema_version: 1,
             message_id: emailResult.messageId,
             direction: 'outbound',
-            from: config.cc_email,
+            from: candidateFacingFrom(config),
             to: [candidate.channels.email],
-            cc: [config.cc_email],
+            cc: candidateFacingCc(config),
             subject: args.email_subject ?? `Homework Assignment: ${args.role}`,
             body: homeworkBody,
             timestamp: new Date().toISOString(),
@@ -1386,7 +1415,7 @@ export function createHandlers(deps: ServerDeps) {
           to: candidate.channels.email,
           subject: args.email_subject,
           text: decideBody,
-          cc: [config.cc_email],
+          cc: candidateFacingCc(config),
         });
         messageId = emailResult.messageId;
 
@@ -1395,9 +1424,9 @@ export function createHandlers(deps: ServerDeps) {
           schema_version: 1,
           message_id: emailResult.messageId,
           direction: 'outbound',
-          from: config.cc_email,
+          from: candidateFacingFrom(config),
           to: [candidate.channels.email],
-          cc: [config.cc_email],
+          cc: candidateFacingCc(config),
           subject: args.email_subject,
           body: decideBody,
           timestamp: new Date().toISOString(),
@@ -1520,7 +1549,15 @@ export function createHandlers(deps: ServerDeps) {
             }
           }
 
-          return success({ overview, framework_versions: frameworkVersions, version_warnings: versionWarnings, agentmail_key_configured: !!getApiKey(), inbox_sync: inboxSync });
+          const config = store.configExists() ? store.readConfig() : undefined;
+          return success({
+            overview,
+            framework_versions: frameworkVersions,
+            version_warnings: versionWarnings,
+            agentmail_key_configured: !!getApiKey(),
+            agentmail_inbox_configured: !!config?.agentmail_inbox_id,
+            inbox_sync: inboxSync,
+          });
         }
 
         case 'candidate': {
@@ -1730,7 +1767,7 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
   const emailClient = deps?.emailClient;
 
   const handlers = createHandlers({ store, emailClient, apiKey });
-  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.11' });
+  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.12' });
 
   registerRecruitingTools(server, handlers);
 

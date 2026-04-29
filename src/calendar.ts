@@ -169,6 +169,15 @@ function icsLine(content: string): string {
   return foldLine(content) + '\r\n';
 }
 
+function icsParamValue(value: string): string {
+  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
+function cnParam(name: string | undefined): string {
+  return name ? `;CN=${icsParamValue(name)}` : '';
+}
+
 /**
  * Get day-of-week for a date in a given timezone.
  * Returns 0=Sun … 6=Sat
@@ -477,10 +486,10 @@ export function generateIcs(options: GenerateIcsOptions): string {
   lines.push(icsLine(`DESCRIPTION:${description}`));
   lines.push(icsLine(`LOCATION:${location}`));
 
-  const orgCn = organizerName ? `;CN=${organizerName}` : '';
+  const orgCn = cnParam(organizerName);
   lines.push(icsLine(`ORGANIZER${orgCn}:mailto:${organizerEmail}`));
 
-  const attCn = attendeeName ? `;CN=${attendeeName}` : '';
+  const attCn = cnParam(attendeeName);
   lines.push(
     icsLine(
       `ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION${attCn}:mailto:${attendeeEmail}`,
@@ -488,7 +497,7 @@ export function generateIcs(options: GenerateIcsOptions): string {
   );
 
   if (hmEmail) {
-    const hmCn = hmName ? `;CN=${hmName}` : '';
+    const hmCn = cnParam(hmName);
     lines.push(
       icsLine(
         `ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION${hmCn}:mailto:${hmEmail}`,
@@ -586,10 +595,10 @@ export function generateCancelIcs(options: GenerateCancelIcsOptions): string {
   lines.push(icsLine(`SUMMARY:${summary}`));
   lines.push(icsLine(`SEQUENCE:1`));
 
-  const orgCn = organizerName ? `;CN=${organizerName}` : '';
+  const orgCn = cnParam(organizerName);
   lines.push(icsLine(`ORGANIZER${orgCn}:mailto:${organizerEmail}`));
 
-  const attCn = attendeeName ? `;CN=${attendeeName}` : '';
+  const attCn = cnParam(attendeeName);
   lines.push(
     icsLine(
       `ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION${attCn}:mailto:${attendeeEmail}`,
@@ -597,7 +606,7 @@ export function generateCancelIcs(options: GenerateCancelIcsOptions): string {
   );
 
   if (hmEmail) {
-    const hmCn = hmName ? `;CN=${hmName}` : '';
+    const hmCn = cnParam(hmName);
     lines.push(
       icsLine(
         `ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION${hmCn}:mailto:${hmEmail}`,

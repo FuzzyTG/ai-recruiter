@@ -365,6 +365,18 @@ describe('generateIcs', () => {
     expect(unfolded).toContain('ATTENDEE');
   });
 
+  it('quotes CN parameters with commas and escapes embedded quotes', () => {
+    const ics = generateIcs({
+      ...baseOpts,
+      organizerName: 'Grace, AI "Recruiting" Coordinator',
+      attendeeName: 'Alice, Candidate',
+    });
+    const unfolded = ics.replace(/\r\n[ \t]/g, '');
+
+    expect(unfolded).toContain('ORGANIZER;CN="Grace, AI \\"Recruiting\\" Coordinator":mailto:recruiter@example.com');
+    expect(unfolded).toContain('ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN="Alice, Candidate":mailto:alice@example.com');
+  });
+
   it('should use TZID-qualified dates', () => {
     const ics = generateIcs(baseOpts);
     expect(ics).toContain('DTSTART;TZID=UTC:');
@@ -447,5 +459,17 @@ describe('generateCancelIcs', () => {
     expect(ics).toContain('mailto:hm@test.com');
     expect(ics).toContain('ATTENDEE');
     expect(ics).toContain('mailto:candidate@test.com');
+  });
+
+  it('quotes CN parameters with commas and escapes embedded quotes', () => {
+    const ics = generateCancelIcs({
+      ...baseOptions,
+      organizerName: 'Grace "Ops", AI Recruiting Coordinator',
+      attendeeName: 'Test "Final", Candidate',
+    });
+    const unfolded = ics.replace(/\r\n[ \t]/g, '');
+
+    expect(unfolded).toContain('ORGANIZER;CN="Grace \\"Ops\\", AI Recruiting Coordinator":mailto:hm@test.com');
+    expect(unfolded).toContain('ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN="Test \\"Final\\", Candidate":mailto:candidate@test.com');
   });
 });

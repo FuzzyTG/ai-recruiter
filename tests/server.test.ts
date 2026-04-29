@@ -177,6 +177,7 @@ describe('recruit_setup', () => {
       role: 'eng',
       hm_name: 'Alice',
       company_name: 'Acme',
+      coordinator_name: 'Grace',
       cc_email: 'alice@acme.com',
       timezone: 'UTC',
       language: 'en',
@@ -186,6 +187,43 @@ describe('recruit_setup', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.data.config_created).toBe(true);
     expect(store.configExists()).toBe(true);
+
+    const config = store.readConfig();
+    expect(config.communication).toEqual({
+      coordinator: {
+        name: 'Grace',
+        display_name: 'Grace, AI Recruiting Coordinator',
+        email_local_part: 'grace',
+      },
+    });
+    expect(config.sender_name).toBe('Grace, AI Recruiting Coordinator');
+    expect(config.agentmail_inbox_email).toBe('recruiter@agentmail.to');
+    expect(emailClient.createInbox).toHaveBeenCalledWith(
+      'Grace, AI Recruiting Coordinator',
+      'alice',
+      'grace',
+    );
+  });
+
+  it('normalizes coordinator local-part during setup', async () => {
+    const result = await handlers.recruitSetup({
+      role: 'eng',
+      hm_name: 'Alice',
+      company_name: 'Acme',
+      coordinator_name: 'Grace Hopper Jr.',
+      cc_email: 'alice@acme.com',
+      timezone: 'UTC',
+      language: 'en',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(store.readConfig().communication?.coordinator.email_local_part).toBe('grace.hopper.jr');
+    expect(emailClient.createInbox).toHaveBeenCalledWith(
+      'Grace Hopper Jr., AI Recruiting Coordinator',
+      'alice',
+      'grace.hopper.jr',
+    );
   });
 
   it('skips config when already exists', async () => {
@@ -196,6 +234,170 @@ describe('recruit_setup', () => {
 
     expect(parsed.success).toBe(true);
     expect(parsed.data.config_created).toBe(false);
+  });
+
+  it('keeps existing config without coordinator identity usable', async () => {
+    store.writeConfig(makeConfig());
+    await handlers.recruitSetup({ role: 'eng' });
+
+    const config = store.readConfig();
+    expect(config.communication).toBeUndefined();
+    expect(config.sender_name).toBe('AI Assistant');
+  });
+
+  it('creates a missing AgentMail inbox for existing config when API key becomes available', async () => {
+    const config = makeConfig();
+    config.agentmail_inbox_id = '';
+    config.agentmail_inbox_email = undefined;
+    config.communication = {
+      coordinator: {
+        name: 'Grace',
+        display_name: 'Grace, AI Recruiting Coordinator',
+        email_local_part: 'grace',
+      },
+    };
+    store.writeConfig(config);
+
+    const result = await handlers.recruitSetup({ role: 'eng' });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.config_updated).toBe(true);
+    expect(parsed.data.inbox_email).toBe('recruiter@agentmail.to');
+    expect(emailClient.createInbox).toHaveBeenCalledWith(
+      'Grace, AI Recruiting Coordinator',
+      'test-hm',
+      'grace',
+    );
+    const updated = store.readConfig();
+    expect(updated.agentmail_inbox_id).toBe('inbox-001');
+    expect(updated.agentmail_inbox_email).toBe('recruiter@agentmail.to');
+  });
+
+  it('does not update a newly recovered AgentMail inbox before persisting it', async () => {
+    const config = makeConfig();
+    config.agentmail_inbox_id = '';
+    config.agentmail_inbox_email = undefined;
+    store.writeConfig(config);
+    (emailClient.updateInbox as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('should not update'));
+
+    const result = await handlers.recruitSetup({ role: 'eng', coordinator_name: 'Grace' });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(emailClient.createInbox).toHaveBeenCalledWith(
+      'Grace, AI Recruiting Coordinator',
+      'test-hm',
+      'grace',
+    );
+    expect(emailClient.updateInbox).not.toHaveBeenCalled();
+    const updated = store.readConfig();
+    expect(updated.agentmail_inbox_id).toBe('inbox-001');
+    expect(updated.agentmail_inbox_email).toBe('recruiter@agentmail.to');
+  });
+
+  it('uses coordinator identity for legacy configs updated without inbox email', async () => {
+    store.writeConfig(makeConfig());
+    store.writeFramework('eng', makeFramework('eng'));
+
+    await handlers.recruitSetup({ role: 'eng', coordinator_name: 'Grace' });
+    const scoreResult = await handlers.recruitScore({
+      role: 'eng',
+      candidate_name: 'Candidate',
+      email: 'candidate@test.com',
+      resume_markdown: '# Resume',
+      scores: {
+        technical: { score: 4, evidence: 'Strong' },
+        communication: { score: 4, evidence: 'Strong' },
+      },
+      approved: true,
+    });
+    const candidateId = parseResult(scoreResult).data.candidate_id;
+
+    await handlers.recruitSchedule({
+      role: 'eng',
+      candidate_id: candidateId,
+      action: 'propose',
+      email_body: 'Please pick a slot.',
+      approved: true,
+    });
+
+    const messages = store.readConversation(`conv-${candidateId}`);
+    const outbound = messages[messages.length - 1];
+    expect(outbound.from).toBe('"Grace, AI Recruiting Coordinator"');
+    expect(outbound.cc).toEqual(['hm@test.com']);
+  });
+
+  it('does not save coordinator updates when AgentMail inbox update fails', async () => {
+    store.writeConfig(makeConfig());
+    (emailClient.updateInbox as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('AgentMail unavailable'));
+
+    const result = await handlers.recruitSetup({ role: 'eng', coordinator_name: 'Grace' });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.message).toBe('AgentMail unavailable');
+
+    const config = store.readConfig();
+    expect(config.communication).toBeUndefined();
+    expect(config.sender_name).toBe('AI Assistant');
+  });
+
+  it('uses default coordinator identity for blank coordinator names', async () => {
+    const result = await handlers.recruitSetup({
+      role: 'eng',
+      hm_name: 'Alice',
+      company_name: 'Acme',
+      coordinator_name: '   ',
+      cc_email: 'alice@acme.com',
+      timezone: 'UTC',
+      language: 'en',
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(store.readConfig().communication?.coordinator).toEqual({
+      name: 'AI Assistant',
+      display_name: 'AI Assistant, AI Recruiting Coordinator',
+      email_local_part: 'ai.assistant',
+    });
+  });
+
+  it('always CCs the hiring manager for candidate-facing email', async () => {
+    const config = makeConfig();
+    config.communication = {
+      coordinator: {
+        name: 'Grace',
+        display_name: 'Grace, AI Recruiting Coordinator',
+        email_local_part: 'grace',
+      },
+    };
+    store.writeConfig(config);
+    store.writeFramework('eng', makeFramework('eng'));
+
+    const scoreResult = await handlers.recruitScore({
+      role: 'eng',
+      candidate_name: 'Candidate',
+      email: 'candidate@test.com',
+      resume_markdown: '# Resume',
+      scores: {
+        technical: { score: 4, evidence: 'Strong' },
+        communication: { score: 4, evidence: 'Strong' },
+      },
+      approved: true,
+    });
+    const candidateId = parseResult(scoreResult).data.candidate_id;
+
+    await handlers.recruitSchedule({
+      role: 'eng',
+      candidate_id: candidateId,
+      action: 'propose',
+      email_body: 'Please pick a slot.',
+      approved: true,
+    });
+
+    expect(emailClient.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      cc: ['hm@test.com'],
+    }));
   });
 
   it('creates framework with valid dimensions (weights sum to 1.0)', async () => {
@@ -424,6 +626,7 @@ describe('recruit_setup', () => {
       role: 'eng',
       hm_name: 'Alice',
       company_name: 'Acme',
+      coordinator_name: 'Grace',
       cc_email: 'alice@acme.com',
       timezone: 'UTC',
       language: 'en',
@@ -433,7 +636,7 @@ describe('recruit_setup', () => {
     const parsed = parseResult(result);
     expect(parsed.success).toBe(true);
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'AI Assistant',
+      'Grace, AI Recruiting Coordinator',
       'alice',
       'acme-recruiting',
     );
@@ -778,7 +981,18 @@ describe('recruit_schedule (propose)', () => {
     expect(parsed.data.slots_proposed).toBeGreaterThan(0);
   });
 
-  it('sends email (verify mock called)', async () => {
+  it('sends email from coordinator identity and CCs the hiring manager', async () => {
+    const config = store.readConfig();
+    config.communication = {
+      coordinator: {
+        name: 'Grace',
+        display_name: 'Grace, AI Recruiting Coordinator',
+        email_local_part: 'grace',
+      },
+    };
+    config.agentmail_inbox_email = 'grace@agentmail.test';
+    store.writeConfig(config);
+
     await handlers.recruitSchedule({
       role: 'test-role',
       candidate_id: candidateId,
@@ -787,7 +1001,38 @@ describe('recruit_schedule (propose)', () => {
       approved: true,
     });
 
-    expect(emailClient.sendEmail).toHaveBeenCalled();
+    expect(emailClient.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      cc: ['hm@test.com'],
+    }));
+    const messages = store.readConversation(`conv-${candidateId}`);
+    const outbound = messages[messages.length - 1];
+    expect(outbound.from).toBe('"Grace, AI Recruiting Coordinator" <grace@agentmail.test>');
+    expect(outbound.cc).toEqual(['hm@test.com']);
+  });
+
+  it('escapes coordinator display names in RFC-style conversation from metadata', async () => {
+    const config = store.readConfig();
+    config.communication = {
+      coordinator: {
+        name: 'Grace "Ops"',
+        display_name: 'Grace "Ops", AI Recruiting Coordinator',
+        email_local_part: 'grace.ops',
+      },
+    };
+    config.agentmail_inbox_email = 'grace@agentmail.test';
+    store.writeConfig(config);
+
+    await handlers.recruitSchedule({
+      role: 'test-role',
+      candidate_id: candidateId,
+      action: 'propose',
+      email_body: 'Please find available slots below.',
+      approved: true,
+    });
+
+    const messages = store.readConversation(`conv-${candidateId}`);
+    const outbound = messages[messages.length - 1];
+    expect(outbound.from).toBe('"Grace \\"Ops\\", AI Recruiting Coordinator" <grace@agentmail.test>');
   });
 
   it('transitions to scheduling state', async () => {
@@ -1652,6 +1897,24 @@ describe('recruit_decide', () => {
     expect(parsed.data.state).toBe(CandidateState.Hired);
   });
 
+  it('decision email CCs the hiring manager', async () => {
+    await handlers.recruitDecide({
+      role: 'test-role',
+      candidate_id: candidateId,
+      decision: 'hire',
+      email_subject: 'Welcome!',
+      email_body: 'You are hired!',
+      approved: true,
+    });
+
+    expect(emailClient.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      cc: ['hm@test.com'],
+    }));
+    const messages = store.readConversation(`conv-${candidateId}`);
+    const outbound = messages[messages.length - 1];
+    expect(outbound.cc).toEqual(['hm@test.com']);
+  });
+
   it('transitions to rejected correctly', async () => {
     const result = await handlers.recruitDecide({
       role: 'test-role',
@@ -1982,6 +2245,8 @@ describe('recruit_status', () => {
 
     const parsed = parseResult(result);
     expect(parsed.success).toBe(true);
+    expect(parsed.data.agentmail_inbox_configured).toBe(true);
+    expect(parsed.data).not.toHaveProperty('agentmail_inbox_id');
     expect(parsed.data.overview['test-role']).toBeDefined();
     expect(parsed.data.overview['test-role'][CandidateState.ScreenedPass].length).toBe(1);
     expect(parsed.data.overview['test-role'][CandidateState.Scheduling].length).toBe(1);
