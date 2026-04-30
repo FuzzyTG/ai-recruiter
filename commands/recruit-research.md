@@ -70,13 +70,60 @@ Disallowed claim areas:
 
 ### Step 4: Dispatch Research Sub-agent
 
-**[Agent]** Use the Agent tool with `run_in_background: true` to dispatch a research sub-agent. Pass it:
+**[Agent]** Use the Agent tool with `run_in_background: true` to dispatch a research sub-agent. Fill in the template below with candidate-specific data from Steps 2–3:
 
-- The bounded claim list from Step 3.
-- A candidate context summary (name, role, relevant resume evidence, structured `professional_urls`).
-- Research rules: public HTTPS sources only, fact/inference/unknown separation, no private-life or protected-characteristic investigation, do not treat search snippets as authoritative when the source page is unavailable.
-- The expected structured card output format (claim, claim_type, priority_reason, source_backed_facts with source title and URL, inferences with confidence, unknowns, attribution_limits, matching_relevance, follow_up_probes, `use_in_scoring: "context_only"`).
-- Instruction to use `professional_urls` to choose high-signal candidate-supplied targets and not automatically crawl every URL.
+````text
+Research the following candidate claims using public web sources. Return structured card data only — no prose, no commentary.
+
+Candidate: {{candidate_name}} ({{candidate_id}})
+Role: {{role}}
+
+Claims to investigate:
+{{#each claims}}
+- Claim {{@index}}: {{claim}} — Priority: {{priority_reason}}
+{{/each}}
+
+Candidate-supplied professional URLs (use these as primary research targets — do not crawl all of them automatically, choose high-signal targets relevant to the claims above):
+{{#each professional_urls}}
+- {{url}} ({{category}}, source: {{source}})
+{{/each}}
+{{#if portfolio_urls}}
+
+Portfolio URLs:
+{{#each portfolio_urls}}
+- {{url}}
+{{/each}}
+{{/if}}
+
+Research rules:
+- Use only public HTTPS sources. HTTP, private-network, local, or internal URLs must not appear in source_backed_facts.
+- Separate source-backed facts from inferences. Never present an inference as a fact.
+- Each inference must have a confidence level: low, medium, or high.
+- Unknowns must be explicit — if you cannot verify a claim, say so rather than omitting it.
+- If a source page is unavailable or only a search snippet exists, record it as an unknown or attribution_limit with a follow_up_probe, not as a fact.
+- Do not investigate private personal life, family, politics, religion, health, age, ethnicity, gender, sexuality, disability, or any other protected characteristic.
+- Do not treat company/product success as proof of candidate quality.
+
+Return exactly one JSON array of card objects. Each card must have this structure:
+{
+  "claim": "<the claim being investigated>",
+  "claim_type": "<project | public_profile | writing | talk | publication | company_context | other>",
+  "priority_reason": "<why this claim is high-signal>",
+  "source_backed_facts": [
+    { "fact": "<verified fact>", "sources": [{ "title": "<page title>", "url": "<public HTTPS URL>" }] }
+  ],
+  "inferences": [
+    { "inference": "<inference drawn from facts>", "confidence": "<low | medium | high>" }
+  ],
+  "unknowns": ["<what could not be verified>"],
+  "attribution_limits": ["<what has uncertain attribution>"],
+  "matching_relevance": "<how this relates to the role/interview>",
+  "follow_up_probes": ["<interview question to clarify this claim>"],
+  "use_in_scoring": "context_only"
+}
+
+Return the JSON array and nothing else.
+````
 
 After dispatch, tell the HM:
 
