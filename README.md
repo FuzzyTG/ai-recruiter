@@ -101,9 +101,26 @@ AI Recruiter exposes these workflow tools through MCP:
 
 ### Claude Code plugin
 
+Install from the latest marketplace version:
+
 ```bash
 /plugin marketplace add FuzzyTG/ai-recruiter
 /plugin install ai-recruiter@fuzzytg
+```
+
+To pin to a stable release tag instead of latest:
+
+```bash
+/plugin marketplace add FuzzyTG/ai-recruiter@v0.1.12
+/plugin install ai-recruiter@fuzzytg
+```
+
+To return to latest later, remove and re-add the marketplace without a tag:
+
+```bash
+/plugin marketplace remove fuzzytg
+/plugin marketplace add FuzzyTG/ai-recruiter
+/plugin update ai-recruiter
 ```
 
 Then start with:
