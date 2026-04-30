@@ -16,6 +16,9 @@ description: Research public candidate context and save approved research cards
 - Saved source-backed facts require public HTTPS source URLs; inaccessible HTTP/private/internal sources should become unknowns or attribution limits with follow-up probes instead of saved facts.
 - Research only public, role-relevant professional context. Do not investigate private personal life, family, politics, religion, health, age, ethnicity, gender, sexuality, disability, or any other protected characteristic.
 - If public attribution is uncertain, state the attribution limit instead of treating it as fact.
+- Delegate source-heavy research to a background sub-agent to avoid blocking the hiring manager. The main agent orchestrates; the sub-agent investigates.
+- After dispatching the sub-agent, inform the HM that research is running and they can continue working.
+- Review sub-agent results for structural quality before presenting to the HM.
 - Match output language to `config.language` when available.
 
 ## Dependency Guard
@@ -65,21 +68,37 @@ Disallowed claim areas:
 - Sensitive personal data not supplied for recruiting purposes.
 - Speculative identity matching beyond public professional context.
 
-### Step 4: Research Public Context
+### Step 4: Dispatch Research Sub-Agent
 
-**[LLM]** Use appropriate read-only web/research tools available in Claude Code for public sources only after the HM asks for research. Do not automatically crawl every structured URL; use `professional_urls` to choose high-signal candidate-supplied targets and keep source notes concise.
+**[LLM]** Dispatch a background sub-agent using the Agent tool with `run_in_background: true`. The sub-agent performs the slow source investigation in an isolated context so the hiring manager is not blocked.
 
-For each claim, collect:
-- Source-backed facts with source title and URL.
-- Inferences clearly marked separately from facts.
-- Confidence for each inference: `low`, `medium`, or `high`.
-- Unknowns and attribution limits.
-- Matching relevance to the role/interview.
-- Follow-up probes for the interviewer.
+Include in the sub-agent prompt:
 
-Do not treat search snippets as authoritative when the source page is unavailable. If the source cannot be checked, mark it as an unknown or attribution limit. Source-backed facts that will be saved must cite public HTTPS URLs only; HTTP, private-network, local, inaccessible, or internal URLs should be captured as unknowns, attribution limits, or follow-up probes instead of facts.
+- The 3–5 extracted claims with their priority reasons.
+- Candidate context summary: name, role, relevant scores/evidence, `professional_urls`, and `portfolio_urls`.
+- Research rules: use only public HTTPS sources; separate facts (with source URLs), inferences (with confidence), unknowns, and attribution limits; do not investigate private personal life or protected characteristics; do not treat company/product success as proof of candidate quality.
+- Expected output: for each claim, return structured card data with `claim`, `claim_type`, `priority_reason`, `source_backed_facts`, `inferences`, `unknowns`, `attribution_limits`, `matching_relevance`, `follow_up_probes`, and `use_in_scoring: "context_only"`.
+- If a source is inaccessible, sparse, or ambiguous, save the uncertainty and generate a follow-up probe instead of making a negative judgment.
 
-### Step 5: Draft Research Cards
+After dispatching, tell the HM:
+
+> "Research is running in the background for [candidate name]. This may take a few minutes. You can continue with other commands while it runs — I'll present the results when ready."
+
+### Step 5: Review Sub-Agent Results
+
+**[LLM]** When the sub-agent returns draft card data, review the results before presenting to the HM:
+
+- All required fields present per card?
+- Facts cite public HTTPS source URLs?
+- Inferences include confidence levels (`low`, `medium`, `high`)?
+- Unknowns and attribution limits are explicit, not hidden inside facts?
+- No protected-characteristic inference or private-life investigation?
+- Cards are scoped to the original extracted claims?
+- No more than 5 cards?
+
+If structural issues are found, correct them inline. Do not re-dispatch the sub-agent for minor fixes — the main agent fixes card structure directly.
+
+### Step 6: Draft Research Cards
 
 **[LLM]** Present 3–5 cards in this structure:
 
@@ -112,7 +131,7 @@ Use in scoring: context_only
 
 Keep claims tightly scoped. Do not include more than 5 cards.
 
-### Step 6: Approval Gate
+### Step 7: Approval Gate
 
 **[LLM]** Ask the HM which cards to save:
 
@@ -120,7 +139,7 @@ Keep claims tightly scoped. Do not include more than 5 cards.
 
 If the HM requests edits, revise the draft and repeat the approval gate. Do not save until the HM clearly approves specific final cards.
 
-### Step 7: Save Approved Cards
+### Step 8: Save Approved Cards
 
 **[MCP]** Call `recruit_save_research_cards` with only approved cards:
 
@@ -153,7 +172,7 @@ If the HM requests edits, revise the draft and repeat the approval gate. Do not 
 }
 ```
 
-### Step 8: Display Result
+### Step 9: Display Result
 
 **[LLM]** Show a concise result:
 
@@ -179,3 +198,6 @@ Next: Use `/recruit-prepare <candidate>` to generate interview prep with saved r
 | Researching private/protected traits | Irrelevant and discriminatory | Restrict to public professional, role-relevant context |
 | Saving HTTP/private/internal URLs as source-backed facts | Saved facts must be persistable public HTTPS evidence | Put inaccessible or non-public sources in unknowns, attribution limits, or probes |
 | Running research from `/recruit-prepare` | Prep must stay read-only and fast | Run `/recruit-research` first, then prep consumes saved cards |
+| Running research inline in main context | Blocks HM for minutes, pollutes main context | Dispatch background sub-agent with bounded claim list |
+| Skipping review of sub-agent results | Sub-agent may produce malformed or overconfident cards | Main agent reviews structure before presenting |
+| Re-dispatching sub-agent for minor fixes | Wastes time on a second slow research pass | Main agent corrects structural issues inline |
