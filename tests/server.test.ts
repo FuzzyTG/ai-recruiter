@@ -870,6 +870,45 @@ describe('recruit_score', () => {
     expect(candidate.portfolio_urls).toEqual(['https://jane.dev', 'https://github.com/jane']);
   });
 
+  it('extracts candidate-supplied professional URLs from resume and provided URLs without changing score outcome', async () => {
+    const result = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_name: 'Jane Links',
+      email: 'jane.links@example.com',
+      resume_markdown: [
+        '# Jane Links',
+        'Portfolio: https://jane.dev/projects.',
+        'GitHub: https://github.com/jane-links',
+        'Writing: https://medium.com/@jane-links/post?ref=cv',
+        'Duplicate: https://github.com/jane-links/',
+        'Reject private: https://localhost/profile https://10.0.0.5/project https://intranet/profile',
+        'Reject scheme: ftp://example.com/file',
+      ].join('\n'),
+      scores: {
+        technical: { score: 4, evidence: 'Good' },
+        communication: { score: 4, evidence: 'Good' },
+      },
+      portfolio_urls: ['https://www.linkedin.com/in/jane-links', 'https://jane.dev/projects'],
+      approved: true,
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.overall_score).toBe(0.8);
+    expect(parsed.data.state).toBe(CandidateState.ScreenedPass);
+
+    const candidate = store.readCandidate('test-role', parsed.data.candidate_id);
+    expect(candidate.professional_urls).toEqual([
+      { url: 'https://jane.dev/projects', category: 'portfolio', source: 'resume' },
+      { url: 'https://github.com/jane-links', category: 'github', source: 'resume' },
+      { url: 'https://medium.com/@jane-links/post?ref=cv', category: 'writing', source: 'resume' },
+      { url: 'https://www.linkedin.com/in/jane-links', category: 'linkedin', source: 'portfolio_urls' },
+    ]);
+    expect(candidate.scores?.overall).toBe(0.8);
+    expect(candidate.state).toBe(CandidateState.ScreenedPass);
+    expect(candidate.pending_action).toBe('Schedule interview');
+  });
+
   it('uses the latest framework version for new candidates while old scores retain their version', async () => {
     const oldResult = await handlers.recruitScore({
       role: 'test-role',
@@ -2477,6 +2516,7 @@ describe('recruit_status', () => {
     expect(parsed.data.candidate.candidate_id).toBe('C-20260414-010');
     expect(parsed.data.recent_messages).toBeDefined();
     expect(parsed.data.research_cards).toEqual([]);
+    expect(parsed.data.professional_urls).toEqual([]);
   });
 
   it('candidate: returns saved research cards', async () => {
@@ -3185,6 +3225,57 @@ describe('recruit_status (inbox)', () => {
     expect(conversation).toHaveLength(1);
     expect(conversation[0].message_id).toBe('inbound-msg-001');
     expect(conversation[0].direction).toBe('inbound');
+  });
+
+  it('merges professional URLs from inbound candidate replies into candidate record without changing state or scores', async () => {
+    // Create a candidate with existing professional_urls from intake
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-001',
+      conversation_id: 'conv-C-20260414-001',
+      channels: { primary: 'email' as const, email: 'candidate@test.com' },
+    });
+    c.professional_urls = [
+      { url: 'https://github.com/candidate', category: 'github', source: 'resume' },
+    ];
+    c.state = CandidateState.Scheduling;
+    c.pending_action = 'Confirm interview slot';
+    store.writeCandidate('test-role', c);
+    store.createConversation('conv-C-20260414-001');
+
+    // Inbound reply contains new professional URLs (and a duplicate + private URL)
+    (emailClient.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
+        {
+          messageId: 'inbound-urls-001',
+          threadId: undefined,
+          from: 'candidate@test.com',
+          to: ['recruiter@agentmail.to'],
+          cc: [],
+          subject: 'Re: Interview',
+          text: 'Here is my portfolio: https://myportfolio.dev/work and my writing https://medium.com/@candidate/article — also https://github.com/candidate and https://localhost/internal',
+          receivedAt: '2026-04-15T10:00:00Z',
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const result = await handlers.recruitStatus({ query_type: 'inbox' });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.synced).toBe(1);
+
+    // Verify URLs merged: original + 2 new (duplicate and private rejected)
+    const updated = store.readCandidate('test-role', 'C-20260414-001');
+    expect(updated.professional_urls).toEqual([
+      { url: 'https://github.com/candidate', category: 'github', source: 'resume' },
+      { url: 'https://myportfolio.dev/work', category: 'portfolio', source: 'resume' },
+      { url: 'https://medium.com/@candidate/article', category: 'writing', source: 'resume' },
+    ]);
+
+    // State, scores, and pending_action must not change
+    expect(updated.state).toBe(CandidateState.Scheduling);
+    expect(updated.pending_action).toBe('Confirm interview slot');
+    expect(updated.scores).toBeNull();
   });
 
   it('deduplicates already-recorded messages', async () => {

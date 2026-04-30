@@ -257,6 +257,15 @@ export interface ResearchCard {
   use_in_scoring: 'context_only';
 }
 
+export type ProfessionalUrlCategory = 'github' | 'linkedin' | 'writing' | 'portfolio' | 'other';
+export type ProfessionalUrlSource = 'resume' | 'portfolio_urls';
+
+export interface ProfessionalUrl {
+  url: string;
+  category: ProfessionalUrlCategory;
+  source: ProfessionalUrlSource;
+}
+
 export interface Candidate {
   schema_version: number;
   candidate_id: string; // C-YYYYMMDD-NNN
@@ -277,6 +286,7 @@ export interface Candidate {
   evaluations: Evaluation[];
   offered_slots: OfferedSlot[];
   portfolio_urls?: string[];   // V2: candidate portfolio/website URLs for automated evaluation
+  professional_urls?: ProfessionalUrl[];
   confirmed_interview?: ConfirmedInterview;  // set on confirm, cleared on cancel
   homework_deadline?: string;  // ISO 8601 -- set by send_homework, used by timeout rules
   timeline: TimelineEntry[];

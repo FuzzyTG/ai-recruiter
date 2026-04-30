@@ -33,6 +33,7 @@ import {
   type InboxSyncResult,
 } from './inboxSync.js';
 import { validateResearchCards } from './researchCards.js';
+import { extractProfessionalUrls } from './professionalUrls.js';
 import {
   appendSignature,
   candidateFacingCc,
@@ -511,6 +512,10 @@ export function createHandlers(deps: ServerDeps) {
         evaluations: [],
         offered_slots: [],
         portfolio_urls: args.portfolio_urls ?? [],
+        professional_urls: extractProfessionalUrls({
+          resumeMarkdown: args.resume_markdown,
+          portfolioUrls: args.portfolio_urls,
+        }),
         timeline: [],
         created_at: now,
       };
@@ -1587,12 +1592,14 @@ export function createHandlers(deps: ServerDeps) {
           const recentMessages = conversation.slice(-5);
           const narrative = store.readNarrative(args.role, args.candidate_id);
           const researchCards = store.readResearchCards(args.role, args.candidate_id);
+          const professionalUrls = candidate.professional_urls ?? [];
 
           return success({
             candidate,
             recent_messages: recentMessages,
             narrative: narrative || null,
             research_cards: researchCards,
+            professional_urls: professionalUrls,
             inbox_sync: inboxSync,
           });
         }
@@ -1767,7 +1774,7 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
   const emailClient = deps?.emailClient;
 
   const handlers = createHandlers({ store, emailClient, apiKey });
-  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.13' });
+  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.14' });
 
   registerRecruitingTools(server, handlers);
 

@@ -44,7 +44,7 @@ Use overview data to match the HM's input:
 
 If `role_not_found` or `candidate_not_found` is returned, show a short friendly error and stop.
 
-Use candidate details, scores, portfolio URLs, resume-derived evidence, evaluations, conversation history, and any existing `research_cards` from the status response. Treat `portfolio_urls` and professional URLs in the resume/conversation as candidate-supplied source material, not third-party discovery targets. If resume text, portfolio URLs, role framework, or prior cards are unavailable, state the limitation briefly and avoid inventing details.
+Use candidate details, scores, structured `professional_urls`, portfolio URLs, resume-derived evidence, evaluations, conversation history, and any existing `research_cards` from the status response. Prefer structured `professional_urls` when present because they are deterministic candidate-supplied professional links extracted at intake; treat `portfolio_urls` and professional URLs in the resume/conversation as candidate-supplied source material, not third-party discovery targets. If resume text, structured URLs, portfolio URLs, role framework, or prior cards are unavailable, state the limitation briefly and avoid inventing details.
 
 ### Step 3: Extract Research Targets
 
@@ -56,7 +56,7 @@ Use candidate details, scores, portfolio URLs, resume-derived evidence, evaluati
 Allowed claim areas:
 - Public portfolio or project pages supplied by the candidate.
 - Public professional profiles supplied by the candidate or already present in candidate data.
-- Candidate-supplied GitHub/profile links, writing, demos, project pages, public talks, publications, repos, products, patents, or company/project pages relevant to the role.
+- Structured `professional_urls` from candidate status, including candidate-supplied GitHub/profile links, writing, demos, project pages, public talks, publications, repos, products, patents, or company/project pages relevant to the role.
 - Public/contextual web sources that clarify those candidate-supplied professional claims without expanding into private-life or protected-characteristic investigation.
 
 Disallowed claim areas:
@@ -67,7 +67,7 @@ Disallowed claim areas:
 
 ### Step 4: Research Public Context
 
-**[LLM]** Use appropriate read-only web/research tools available in Claude Code for public sources. Keep source notes concise.
+**[LLM]** Use appropriate read-only web/research tools available in Claude Code for public sources only after the HM asks for research. Do not automatically crawl every structured URL; use `professional_urls` to choose high-signal candidate-supplied targets and keep source notes concise.
 
 For each claim, collect:
 - Source-backed facts with source title and URL.

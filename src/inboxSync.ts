@@ -3,6 +3,7 @@ import type { ConversationMessage } from './models.js';
 import type { RecruiterStore } from './store.js';
 import type { RecruiterMailClient, InboundMessage } from './emailClient.js';
 import { parseEmailAddress } from './emailComposer.js';
+import { extractProfessionalUrls } from './professionalUrls.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -196,6 +197,26 @@ async function syncInboxForMatches(
       };
       store.appendMessage(match.conversation_id, convMsg);
       knownMessageIds.add(msg.messageId);
+
+      // Merge any new professional URLs from inbound candidate text
+      const newUrls = extractProfessionalUrls({ resumeMarkdown: msg.text });
+      if (newUrls.length > 0) {
+        const candidate = store.readCandidate(match.role, match.candidate_id);
+        const existing = candidate.professional_urls ?? [];
+        const seen = new Set(existing.map((u) => u.url));
+        let added = false;
+        for (const u of newUrls) {
+          if (!seen.has(u.url)) {
+            existing.push(u);
+            seen.add(u.url);
+            added = true;
+          }
+        }
+        if (added) {
+          candidate.professional_urls = existing;
+          store.writeCandidate(match.role, candidate);
+        }
+      }
 
       newMessages.push({
         candidate_id: match.candidate_id,
