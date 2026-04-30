@@ -9,6 +9,7 @@ description: Generate a candidate-specific interview prep guide
 - Generate prep for **one candidate in one role** only.
 - Return the prep guide directly in chat. Do not persist generated prep artifacts.
 - Use existing MCP tools for all recruiting data access. Never read from `~/.recruiter/` directly.
+- Saved `research_cards` are the only research context for prep; do not use web/search/profile tools or perform live research here.
 - Match output language to `config.language` when available.
 
 ## Dependency Guard

@@ -10,7 +10,10 @@ description: Research public candidate context and save approved research cards
 - Research is context-only. Never change scores, candidate state, pending actions, rankings, or pipeline decisions.
 - Save only cards explicitly approved by the HM.
 - Produce only the top 3–5 high-signal claims.
+- Treat candidate-supplied professional URLs as first-class research inputs: portfolio sites, GitHub/profile links, writing, demos, project pages, publications, talks, and other application-relevant professional links are extended CV material.
+- Use public web/contextual sources only when they clarify candidate-supplied professional claims, company/product/project context, or role-relevant public professional evidence.
 - Preserve separation between source-backed facts, inferences, unknowns, confidence, and sources.
+- Saved source-backed facts require public HTTPS source URLs; inaccessible HTTP/private/internal sources should become unknowns or attribution limits with follow-up probes instead of saved facts.
 - Research only public, role-relevant professional context. Do not investigate private personal life, family, politics, religion, health, age, ethnicity, gender, sexuality, disability, or any other protected characteristic.
 - If public attribution is uncertain, state the attribution limit instead of treating it as fact.
 - Match output language to `config.language` when available.
@@ -41,7 +44,7 @@ Use overview data to match the HM's input:
 
 If `role_not_found` or `candidate_not_found` is returned, show a short friendly error and stop.
 
-Use candidate details, scores, portfolio URLs, resume-derived evidence, evaluations, conversation history, and any existing `research_cards` from the status response. If resume text, portfolio URLs, role framework, or prior cards are unavailable, state the limitation briefly and avoid inventing details.
+Use candidate details, scores, portfolio URLs, resume-derived evidence, evaluations, conversation history, and any existing `research_cards` from the status response. Treat `portfolio_urls` and professional URLs in the resume/conversation as candidate-supplied source material, not third-party discovery targets. If resume text, portfolio URLs, role framework, or prior cards are unavailable, state the limitation briefly and avoid inventing details.
 
 ### Step 3: Extract Research Targets
 
@@ -53,7 +56,8 @@ Use candidate details, scores, portfolio URLs, resume-derived evidence, evaluati
 Allowed claim areas:
 - Public portfolio or project pages supplied by the candidate.
 - Public professional profiles supplied by the candidate or already present in candidate data.
-- Public talks, publications, repos, writing, products, patents, or company/project pages relevant to the role.
+- Candidate-supplied GitHub/profile links, writing, demos, project pages, public talks, publications, repos, products, patents, or company/project pages relevant to the role.
+- Public/contextual web sources that clarify those candidate-supplied professional claims without expanding into private-life or protected-characteristic investigation.
 
 Disallowed claim areas:
 - Private personal life or non-professional social media.
@@ -73,7 +77,7 @@ For each claim, collect:
 - Matching relevance to the role/interview.
 - Follow-up probes for the interviewer.
 
-Do not treat search snippets as authoritative when the source page is unavailable. If the source cannot be checked, mark it as an unknown or attribution limit.
+Do not treat search snippets as authoritative when the source page is unavailable. If the source cannot be checked, mark it as an unknown or attribution limit. Source-backed facts that will be saved must cite public HTTPS URLs only; HTTP, private-network, local, inaccessible, or internal URLs should be captured as unknowns, attribution limits, or follow-up probes instead of facts.
 
 ### Step 5: Draft Research Cards
 
@@ -173,4 +177,5 @@ Next: Use `/recruit-prepare <candidate>` to generate interview prep with saved r
 | Saving 10+ low-signal facts | Overwhelms interview prep | Keep top 3–5 high-signal claims |
 | Mixing facts with inferences | Misleads interviewers about evidence strength | Separate facts, inferences, unknowns, confidence, and sources |
 | Researching private/protected traits | Irrelevant and discriminatory | Restrict to public professional, role-relevant context |
+| Saving HTTP/private/internal URLs as source-backed facts | Saved facts must be persistable public HTTPS evidence | Put inaccessible or non-public sources in unknowns, attribution limits, or probes |
 | Running research from `/recruit-prepare` | Prep must stay read-only and fast | Run `/recruit-research` first, then prep consumes saved cards |

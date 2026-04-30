@@ -2213,6 +2213,62 @@ describe('recruit_save_research_cards', () => {
     expect(parsed.error).toBe('validation_error');
     expect(parsed.message).toContain('claim_type');
   });
+
+  it.each([
+    'http://example.com/profile',
+    'https://localhost/profile',
+    'https://intranet/profile',
+    'https://candidate.local/profile',
+    'https://foo.internal/profile',
+    'https://foo.corp/profile',
+    'https://foo.lan/profile',
+    'https://foo.home/profile',
+    'https://127.0.0.2/profile',
+    'https://169.254.1.1/profile',
+    'https://10.0.0.1/profile',
+    'https://172.16.0.1/profile',
+    'https://192.168.1.1/profile',
+    'https://[::1]/profile',
+    'https://[fc00::1]/profile',
+    'https://[fd00::1]/profile',
+    'https://[fe80::1]/profile',
+  ])('rejects approved research card source URLs that are not public HTTPS: %s', async (url) => {
+    const c = makeCandidate({
+      candidate_id: 'C-20260414-010',
+      conversation_id: 'conv-C-20260414-010',
+    });
+    store.writeCandidate('test-role', c);
+
+    const result = await handlers.recruitSaveResearchCards({
+      role: 'test-role',
+      candidate_id: 'C-20260414-010',
+      approved: true,
+      cards: [
+        {
+          claim: 'Claim with private network source',
+          claim_type: 'project',
+          priority_reason: 'Only public professional sources should be persisted.',
+          source_backed_facts: [
+            {
+              fact: 'A non-public source supports this.',
+              sources: [{ title: 'Internal profile', url }],
+            },
+          ],
+          inferences: [],
+          unknowns: [],
+          attribution_limits: ['Source is not public professional context.'],
+          matching_relevance: 'Relevant only if source is public.',
+          follow_up_probes: ['Ask the candidate to provide a public project page if available.'],
+          use_in_scoring: 'context_only',
+        },
+      ],
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('validation_error');
+    expect(parsed.message).toContain('public');
+  });
 });
 
 // =========================================================================
@@ -2420,6 +2476,7 @@ describe('recruit_status', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.data.candidate.candidate_id).toBe('C-20260414-010');
     expect(parsed.data.recent_messages).toBeDefined();
+    expect(parsed.data.research_cards).toEqual([]);
   });
 
   it('candidate: returns saved research cards', async () => {
