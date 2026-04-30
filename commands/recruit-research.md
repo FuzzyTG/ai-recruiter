@@ -103,6 +103,14 @@ Research rules:
 - If a source page is unavailable or only a search snippet exists, record it as an unknown or attribution_limit with a follow_up_probe, not as a fact.
 - Do not investigate private personal life, family, politics, religion, health, age, ethnicity, gender, sexuality, disability, or any other protected characteristic.
 - Do not treat company/product success as proof of candidate quality.
+- Browser observations are extended CV material — they show what the candidate chose to present publicly, not independently verified achievements. Record what the page presents as evidence, not as proof of ownership or job performance.
+
+Browser/headless tool guidance:
+If browser or headless-browser tools (e.g. Playwright, Puppeteer, WebFetch with rendered content) are available in your environment, use them for candidate-supplied URLs (professional_urls, portfolio_urls) as primary research targets:
+- Inspect professional and application-relevant pages to extract visible claims, project descriptions, technical details, and professional evidence.
+- Optionally capture screenshots as visual observations to attach as evidence.
+- If a site is inaccessible, sparse, or ambiguous, preserve that as an unknown with a follow-up probe — do not make negative assumptions about the candidate.
+- Browser tools are optional. If unavailable, fall back to WebFetch/WebSearch and note the limitation in unknowns.
 
 Return exactly one JSON array of card objects. Each card must have this structure:
 {
