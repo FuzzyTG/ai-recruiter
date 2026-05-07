@@ -237,7 +237,13 @@ Candidate: <Name> (<candidate_id>)
 Role:      <role>
 Cards:     <N> context-only card(s)
 
-Next: Use `/recruit-prepare <candidate>` to generate interview prep with saved research context.
+These cards provide background context for interview preparation.
+They do not affect candidate scores or ranking. Each card separates
+verified facts from inferences and unknowns, so interviewers know
+what's confirmed vs. what to probe further.
+
+Next: Use `/recruit-prepare <candidate>` to generate targeted
+interview questions informed by this research.
 ```
 
 ## Anti-patterns
