@@ -154,33 +154,32 @@ Fix structural issues inline without re-dispatching the sub-agent. If a source U
 
 ### Step 6: Draft Research Cards
 
-**[LLM]** Present 3–5 reviewed cards in this structure:
+**[LLM]** Present 3–5 reviewed cards using ASCII box-drawing format. Use box-drawing characters (`┌ ┐ └ ┘ │ ─ ├ ┤`) to draw each card as a distinct bordered box with sections separated by horizontal dividers. Show confidence levels inline as `[low]` `[med]` `[high]`. Source titles appear inline with facts. You do not need to align the right-side `│` to a fixed column — approximate alignment for readability is fine. Separate multiple cards with a blank line between boxes.
 
 ```text
 Research Cards: <Candidate Name> (<candidate_id>)
 Role: <role>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Card 1 — <claim>
-Claim type: <project | public_profile | writing | talk | publication | company_context | other>
-Priority reason: <why this is high-signal>
-
-Source-backed facts:
-- <fact> [<source title>: <URL>]
-
-Inferences:
-- <inference> (confidence: low|medium|high)
-
-Unknowns / attribution limits:
-- <unknown or limit>
-
-Matching relevance:
-- <role/interview relevance>
-
-Follow-up probes:
-- <question>
-
-Use in scoring: context_only
+┌─────────────────────────────────────────────────────────┐
+│ Card 1 — <claim>                                        │
+│ Type: <claim_type>    Priority: <priority_reason>       │
+├─────────────────────────────────────────────────────────┤
+│ Facts:                                                  │
+│  • <fact> [<source title>]                              │
+├─────────────────────────────────────────────────────────┤
+│ Inferences:                                             │
+│  • <inference>                                    [med] │
+├─────────────────────────────────────────────────────────┤
+│ Unknowns:                                               │
+│  • <unknown or attribution limit>                       │
+├─────────────────────────────────────────────────────────┤
+│ Relevance: <matching_relevance>                         │
+├─────────────────────────────────────────────────────────┤
+│ Probes:                                                 │
+│  • <follow-up question>                                 │
+├─────────────────────────────────────────────────────────┤
+│ Scoring: context_only                                   │
+└─────────────────────────────────────────────────────────┘
 ```
 
 Keep claims tightly scoped. Do not include more than 5 cards.
