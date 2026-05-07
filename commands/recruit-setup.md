@@ -32,7 +32,7 @@ description: Set up recruiting config, evaluation framework, and job description
 |-------|----------|---------|
 | `hm_name` | Yes | "Alex Yuan" |
 | `company_name` | Yes | "Acme Corp" |
-| `coordinator_name` | No | "Grace". Defaults to "AI Assistant" if omitted. |
+| `coordinator_name` | No | "Grace". Defaults to "AI Assistant" if omitted. **Must be asked conversationally — see guidance below.** |
 | `cc_email` | Yes | "alex@acme.com" |
 | `timezone` | Yes | "Asia/Shanghai" |
 | `language` | Yes | "zh" or "en" |
@@ -41,6 +41,8 @@ description: Set up recruiting config, evaluation framework, and job description
 | `inbox_username` | No | Local part for recruiting inbox (e.g., "quan-interview" → quan-interview@agentmail.to). If omitted, defaults to the normalized coordinator name. |
 
 Collect conversationally. Don't dump the table — ask naturally. For `calendar_url` and `meeting_link`, explain why they matter: without a calendar URL, the agent cannot find free interview slots. If HM doesn't have one yet, acknowledge and warn that `/recruit-schedule` will not work until it's added.
+
+**Coordinator Identity (required conversational beat):** After collecting HM name and company, explicitly ask what name the AI recruiting coordinator should use in candidate-facing emails. Explain that this is the identity candidates will see — for example, choosing "Grace" means candidates receive emails from "Grace - AI Recruiting Coordinator." This is not the HM's personal name or email; it is a separate persona for the recruiting assistant. Ask the HM directly: *"What name would you like the AI recruiting coordinator to use when emailing candidates?"* If the HM has no preference, default to "AI Assistant." Do not silently skip this question or auto-default without asking.
 
 ### Step 1B: Show Existing Config (returning users only)
 
@@ -51,6 +53,7 @@ Current Config
 ━━━━━━━━━━━━━━
 Name:         Quan
 Company:      Microsoft
+Coordinator:  Grace (emails as "Grace - AI Recruiting Coordinator")
 Email:        alexyuan@microsoft.com
 Timezone:     Asia/Shanghai
 Calendar:     ✓ set
