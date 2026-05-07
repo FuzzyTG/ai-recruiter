@@ -690,15 +690,15 @@ describe('Integration: full hiring pipeline', () => {
     });
 
     const config = store.readConfig();
-    expect(config.sender_name).toBe('AI Assistant, AI Recruiting Coordinator');
+    expect(config.sender_name).toBe('AI Assistant - AI Recruiting Coordinator');
     expect(config.communication?.coordinator).toEqual({
       name: 'AI Assistant',
-      display_name: 'AI Assistant, AI Recruiting Coordinator',
+      display_name: 'AI Assistant - AI Recruiting Coordinator',
       email_local_part: 'ai.assistant',
     });
 
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'AI Assistant, AI Recruiting Coordinator',
+      'AI Assistant - AI Recruiting Coordinator',
       'quan',
       'ai.assistant',
     );
@@ -716,10 +716,10 @@ describe('Integration: full hiring pipeline', () => {
     });
 
     const config = store.readConfig();
-    expect(config.sender_name).toBe('Acme Talent Team, AI Recruiting Coordinator');
+    expect(config.sender_name).toBe('Acme Talent Team - AI Recruiting Coordinator');
 
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'Acme Talent Team, AI Recruiting Coordinator',
+      'Acme Talent Team - AI Recruiting Coordinator',
       'quan',
       'acme.talent.team',
     );
@@ -823,17 +823,17 @@ describe('Integration: full hiring pipeline', () => {
       role: ROLE,
     });
 
-    expect(store.readConfig().sender_name).toBe('AI Assistant, AI Recruiting Coordinator');
+    expect(store.readConfig().sender_name).toBe('AI Assistant - AI Recruiting Coordinator');
 
     await handlers.recruitSetup({
       coordinator_name: 'Acme Talent Team',
       role: ROLE,
     });
 
-    expect(store.readConfig().sender_name).toBe('Acme Talent Team, AI Recruiting Coordinator');
+    expect(store.readConfig().sender_name).toBe('Acme Talent Team - AI Recruiting Coordinator');
     expect(emailClient.updateInbox).toHaveBeenCalledWith(
       'inbox-001',
-      { displayName: 'Acme Talent Team, AI Recruiting Coordinator' },
+      { displayName: 'Acme Talent Team - AI Recruiting Coordinator' },
     );
   });
 });

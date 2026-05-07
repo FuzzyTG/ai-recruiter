@@ -464,12 +464,12 @@ describe('generateCancelIcs', () => {
   it('quotes CN parameters with commas and escapes embedded quotes', () => {
     const ics = generateCancelIcs({
       ...baseOptions,
-      organizerName: 'Grace "Ops", AI Recruiting Coordinator',
+      organizerName: 'Grace "Ops" - AI Recruiting Coordinator',
       attendeeName: 'Test "Final", Candidate',
     });
     const unfolded = ics.replace(/\r\n[ \t]/g, '');
 
-    expect(unfolded).toContain('ORGANIZER;CN="Grace \\"Ops\\", AI Recruiting Coordinator":mailto:hm@test.com');
+    expect(unfolded).toContain('ORGANIZER;CN="Grace \\"Ops\\" - AI Recruiting Coordinator":mailto:hm@test.com');
     expect(unfolded).toContain('ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN="Test \\"Final\\", Candidate":mailto:candidate@test.com');
   });
 });

@@ -192,14 +192,14 @@ describe('recruit_setup', () => {
     expect(config.communication).toEqual({
       coordinator: {
         name: 'Grace',
-        display_name: 'Grace, AI Recruiting Coordinator',
+        display_name: 'Grace - AI Recruiting Coordinator',
         email_local_part: 'grace',
       },
     });
-    expect(config.sender_name).toBe('Grace, AI Recruiting Coordinator');
+    expect(config.sender_name).toBe('Grace - AI Recruiting Coordinator');
     expect(config.agentmail_inbox_email).toBe('recruiter@agentmail.to');
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'Grace, AI Recruiting Coordinator',
+      'Grace - AI Recruiting Coordinator',
       'alice',
       'grace',
     );
@@ -220,7 +220,7 @@ describe('recruit_setup', () => {
     expect(parsed.success).toBe(true);
     expect(store.readConfig().communication?.coordinator.email_local_part).toBe('grace.hopper.jr');
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'Grace Hopper Jr., AI Recruiting Coordinator',
+      'Grace Hopper Jr. - AI Recruiting Coordinator',
       'alice',
       'grace.hopper.jr',
     );
@@ -252,7 +252,7 @@ describe('recruit_setup', () => {
     config.communication = {
       coordinator: {
         name: 'Grace',
-        display_name: 'Grace, AI Recruiting Coordinator',
+        display_name: 'Grace - AI Recruiting Coordinator',
         email_local_part: 'grace',
       },
     };
@@ -265,7 +265,7 @@ describe('recruit_setup', () => {
     expect(parsed.data.config_updated).toBe(true);
     expect(parsed.data.inbox_email).toBe('recruiter@agentmail.to');
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'Grace, AI Recruiting Coordinator',
+      'Grace - AI Recruiting Coordinator',
       'test-hm',
       'grace',
     );
@@ -286,7 +286,7 @@ describe('recruit_setup', () => {
     const parsed = parseResult(result);
     expect(parsed.success).toBe(true);
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'Grace, AI Recruiting Coordinator',
+      'Grace - AI Recruiting Coordinator',
       'test-hm',
       'grace',
     );
@@ -324,7 +324,7 @@ describe('recruit_setup', () => {
 
     const messages = store.readConversation(`conv-${candidateId}`);
     const outbound = messages[messages.length - 1];
-    expect(outbound.from).toBe('"Grace, AI Recruiting Coordinator"');
+    expect(outbound.from).toBe('"Grace - AI Recruiting Coordinator"');
     expect(outbound.cc).toEqual(['hm@test.com']);
   });
 
@@ -357,7 +357,7 @@ describe('recruit_setup', () => {
     expect(parsed.success).toBe(true);
     expect(store.readConfig().communication?.coordinator).toEqual({
       name: 'AI Assistant',
-      display_name: 'AI Assistant, AI Recruiting Coordinator',
+      display_name: 'AI Assistant - AI Recruiting Coordinator',
       email_local_part: 'ai.assistant',
     });
   });
@@ -367,7 +367,7 @@ describe('recruit_setup', () => {
     config.communication = {
       coordinator: {
         name: 'Grace',
-        display_name: 'Grace, AI Recruiting Coordinator',
+        display_name: 'Grace - AI Recruiting Coordinator',
         email_local_part: 'grace',
       },
     };
@@ -636,7 +636,7 @@ describe('recruit_setup', () => {
     const parsed = parseResult(result);
     expect(parsed.success).toBe(true);
     expect(emailClient.createInbox).toHaveBeenCalledWith(
-      'Grace, AI Recruiting Coordinator',
+      'Grace - AI Recruiting Coordinator',
       'alice',
       'acme-recruiting',
     );
@@ -1025,7 +1025,7 @@ describe('recruit_schedule (propose)', () => {
     config.communication = {
       coordinator: {
         name: 'Grace',
-        display_name: 'Grace, AI Recruiting Coordinator',
+        display_name: 'Grace - AI Recruiting Coordinator',
         email_local_part: 'grace',
       },
     };
@@ -1045,7 +1045,7 @@ describe('recruit_schedule (propose)', () => {
     }));
     const messages = store.readConversation(`conv-${candidateId}`);
     const outbound = messages[messages.length - 1];
-    expect(outbound.from).toBe('"Grace, AI Recruiting Coordinator" <grace@agentmail.test>');
+    expect(outbound.from).toBe('"Grace - AI Recruiting Coordinator" <grace@agentmail.test>');
     expect(outbound.cc).toEqual(['hm@test.com']);
   });
 
@@ -1054,7 +1054,7 @@ describe('recruit_schedule (propose)', () => {
     config.communication = {
       coordinator: {
         name: 'Grace "Ops"',
-        display_name: 'Grace "Ops", AI Recruiting Coordinator',
+        display_name: 'Grace "Ops" - AI Recruiting Coordinator',
         email_local_part: 'grace.ops',
       },
     };
@@ -1071,7 +1071,7 @@ describe('recruit_schedule (propose)', () => {
 
     const messages = store.readConversation(`conv-${candidateId}`);
     const outbound = messages[messages.length - 1];
-    expect(outbound.from).toBe('"Grace \\"Ops\\", AI Recruiting Coordinator" <grace@agentmail.test>');
+    expect(outbound.from).toBe('"Grace \\"Ops\\" - AI Recruiting Coordinator" <grace@agentmail.test>');
   });
 
   it('transitions to scheduling state', async () => {

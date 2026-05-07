@@ -14,7 +14,7 @@ export function coordinatorIdentity(name: string): CoordinatorIdentity {
   const safeName = trimmedName || 'AI Assistant';
   return {
     name: safeName,
-    display_name: `${safeName}, AI Recruiting Coordinator`,
+    display_name: `${safeName} - AI Recruiting Coordinator`,
     email_local_part: normalizeCoordinatorLocalPart(safeName),
   };
 }

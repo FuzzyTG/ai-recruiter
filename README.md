@@ -53,7 +53,7 @@ Candidate-facing email should come from a coherent delegated recruiting coordina
 For example:
 
 ```text
-Grace, AI Recruiting Coordinator <grace@agentmail-domain>
+Grace - AI Recruiting Coordinator <grace@agentmail-domain>
 ```
 
 The hiring manager remains visible and accountable through approval and CC rules, but the coordinator identity owns the operational communication flow.
