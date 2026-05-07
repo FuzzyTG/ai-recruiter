@@ -89,9 +89,16 @@ Verify response: `config_created: true`. If `inbox_email` is returned, show it t
 | `rubric` | string | What 1-5 means for this dimension |
 | `description` | string | What this dimension measures |
 
-Present as a table. Let HM adjust via natural language ("make technical heavier", "add a leadership dimension", "remove culture fit").
+Present the framework using this table format:
 
-After each adjustment, recalculate weights so they sum to 1.0. Show updated table.
+| Dimension       | Weight | Rubric Summary          |
+|-----------------|--------|-------------------------|
+| technical_depth | 0.35   | Deep PM domain expertise|
+| ...             | ...    | ...                     |
+
+Let HM adjust via natural language ("make technical heavier", "add a leadership dimension", "remove culture fit").
+
+After each adjustment, recalculate weights so they sum to 1.0. Show the updated table using the same format above.
 
 ### Step 5: Save Framework
 
@@ -101,7 +108,7 @@ If server returns `validation_error` (weights don't sum to 1.0), adjust and retr
 
 ### Step 6: Confirm Framework
 
-**Approval Gate**: Show HM the final framework table. Ask explicitly:
+**Approval Gate**: Show HM the final framework table using the same `Dimension | Weight | Rubric Summary` format from Step 4. Ask explicitly:
 
 > "Once confirmed, this framework version cannot be changed. Future adjustments will create a new version under the same role. Confirm?"
 

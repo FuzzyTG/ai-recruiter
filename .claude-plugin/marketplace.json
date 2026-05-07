@@ -10,7 +10,7 @@
     {
       "name": "ai-recruiter",
       "description": "Recruiting domain expertise — screening, scheduling, evaluating, deciding",
-      "version": "0.1.20",
+      "version": "0.1.21",
       "source": "./"
     }
   ]
