@@ -16,8 +16,8 @@ description: Research public candidate context and save approved research cards
 - Saved source-backed facts require public HTTPS source URLs; inaccessible HTTP/private/internal sources should become unknowns or attribution limits with follow-up probes instead of saved facts.
 - Research only public, role-relevant professional context. Do not investigate private personal life, family, politics, religion, health, age, ethnicity, gender, sexuality, disability, or any other protected characteristic.
 - If public attribution is uncertain, state the attribution limit instead of treating it as fact.
-- Delegate source-heavy research to a background sub-agent to avoid blocking the HM.
-- After dispatching the research sub-agent, inform the HM they can continue working.
+- Delegate source-heavy research to a sub-agent for context isolation. Default to foreground dispatch so permission prompts surface naturally. Background dispatch is available as an opt-in when the HM has pre-approved search tools.
+- After dispatching the research sub-agent, inform the HM that research will take a few minutes and they may see permission prompts for search tools.
 - Review sub-agent results for structural quality before presenting cards to the HM.
 - Match output language to `config.language` when available.
 
@@ -70,7 +70,7 @@ Disallowed claim areas:
 
 ### Step 4: Dispatch Research Sub-agent
 
-**[Agent]** Use the Agent tool with `run_in_background: true` to dispatch a research sub-agent. Fill in the template below with candidate-specific data from Steps 2–3:
+**[Agent]** Use the Agent tool to dispatch a research sub-agent (foreground by default — do NOT use `run_in_background: true`). Fill in the template below with candidate-specific data from Steps 2–3:
 
 ````text
 Research the following candidate claims using public web sources. Return structured card data only — no prose, no commentary.
@@ -135,7 +135,9 @@ Return the JSON array and nothing else.
 
 After dispatch, tell the HM:
 
-> "Research is running in the background for [candidate name]. You can continue working — I'll present the results when they're ready."
+> "Researching [candidate name] now — this usually takes a few minutes. You may see permission prompts for search tools; please approve them."
+
+**Background mode (opt-in):** If the HM asks for non-blocking research, tell them to add `WebSearch` and `WebFetch` to their `permissions.allow` in `.claude/settings.json`. Once pre-approved, you can use `run_in_background: true` safely. Only use background mode when the HM explicitly requests it AND confirms search tools are pre-approved.
 
 ### Step 5: Review Sub-agent Results
 
@@ -250,6 +252,6 @@ Next: Use `/recruit-prepare <candidate>` to generate interview prep with saved r
 | Researching private/protected traits | Irrelevant and discriminatory | Restrict to public professional, role-relevant context |
 | Saving HTTP/private/internal URLs as source-backed facts | Saved facts must be persistable public HTTPS evidence | Put inaccessible or non-public sources in unknowns, attribution limits, or probes |
 | Running research from `/recruit-prepare` | Prep must stay read-only and fast | Run `/recruit-research` first, then prep consumes saved cards |
-| Running research inline in main context | Blocks the HM during source-heavy investigation | Dispatch a background sub-agent for research |
+| Running research inline in main context | Blocks the HM and pollutes main context with search results | Dispatch a sub-agent for context isolation (foreground default, background opt-in) |
 | Skipping review of sub-agent results | Sub-agent may produce structural issues or non-HTTPS sources | Main agent reviews card structure before presenting |
 | Re-dispatching sub-agent for minor fixes | Wastes time on a second round trip | Main agent corrects structural issues inline |
