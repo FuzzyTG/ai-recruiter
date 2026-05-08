@@ -95,6 +95,19 @@ function failure(
 }
 
 // ---------------------------------------------------------------------------
+// Time utilities
+// ---------------------------------------------------------------------------
+
+/** Round a date forward to the next :00 or :30 boundary. */
+export function snapToNext30Min(date: Date): Date {
+  const ms = date.getTime();
+  const thirtyMin = 30 * 60 * 1000;
+  const remainder = ms % thirtyMin;
+  if (remainder === 0) return new Date(ms);
+  return new Date(ms + (thirtyMin - remainder));
+}
+
+// ---------------------------------------------------------------------------
 // Role resolution helpers
 // ---------------------------------------------------------------------------
 
@@ -630,7 +643,7 @@ export function createHandlers(deps: ServerDeps) {
         // Parse calendar
         const durationMinutes = args.duration_minutes ?? 60;
         const numSlots = args.num_slots ?? 3;
-        const rangeStart = new Date();
+        const rangeStart = snapToNext30Min(new Date());
         const rangeEnd = new Date(
           rangeStart.getTime() + 14 * 24 * 60 * 60 * 1000,
         ); // 2 weeks out
@@ -666,7 +679,7 @@ export function createHandlers(deps: ServerDeps) {
         const durationMs = durationMinutes * 60_000;
         const fixedSlots: calendar.FreeSlot[] = [];
         for (const gap of freeSlots) {
-          let slotStart = new Date(gap.start);
+          let slotStart = snapToNext30Min(new Date(gap.start));
           while (slotStart.getTime() + durationMs <= gap.end.getTime()) {
             fixedSlots.push({
               start: new Date(slotStart),
@@ -1774,7 +1787,7 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
   const emailClient = deps?.emailClient;
 
   const handlers = createHandlers({ store, emailClient, apiKey });
-  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.23' });
+  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.24' });
 
   registerRecruitingTools(server, handlers);
 

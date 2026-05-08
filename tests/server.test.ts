@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { createHandlers, stripTrailingSignature, appendSignature, generateFollowupBody } from '../src/server.js';
+import { createHandlers, stripTrailingSignature, appendSignature, generateFollowupBody, snapToNext30Min } from '../src/server.js';
 import {
   RecruiterStore,
   SetupRequiredError,
@@ -1018,6 +1018,30 @@ describe('recruit_schedule (propose)', () => {
     const parsed = parseResult(result);
     expect(parsed.success).toBe(true);
     expect(parsed.data.slots_proposed).toBeGreaterThan(0);
+  });
+
+  it('proposes slots starting on 30-minute boundaries', async () => {
+    const result = await handlers.recruitSchedule({
+      role: 'test-role',
+      candidate_id: candidateId,
+      action: 'propose',
+      email_body: 'Please find available slots below.',
+      approved: true,
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+
+    const candidate = store.readCandidate('test-role', candidateId);
+    const offeredSlots = candidate.offered_slots ?? [];
+    expect(offeredSlots.length).toBeGreaterThan(0);
+
+    for (const slot of offeredSlots) {
+      const start = new Date(slot.start);
+      expect(start.getMinutes() % 30).toBe(0);
+      expect(start.getSeconds()).toBe(0);
+      expect(start.getMilliseconds()).toBe(0);
+    }
   });
 
   it('sends email from coordinator identity and CCs the hiring manager', async () => {
@@ -5885,5 +5909,49 @@ describe('recruit_cleanup', () => {
     const parsed = parseResult(result);
     expect(result.isError).toBe(true);
     expect(parsed.error).toBe('role_not_found');
+  });
+});
+
+// =========================================================================
+// snapToNext30Min
+// =========================================================================
+
+describe('snapToNext30Min', () => {
+  it('rounds a mid-interval time forward to the next :30', () => {
+    const d = new Date('2026-05-08T09:12:45.123Z');
+    const snapped = snapToNext30Min(d);
+    expect(snapped.getUTCMinutes()).toBe(30);
+    expect(snapped.getUTCSeconds()).toBe(0);
+    expect(snapped.getUTCMilliseconds()).toBe(0);
+    expect(snapped.getUTCHours()).toBe(9);
+  });
+
+  it('rounds forward to the next :00', () => {
+    const d = new Date('2026-05-08T09:45:00.001Z');
+    const snapped = snapToNext30Min(d);
+    expect(snapped.getUTCHours()).toBe(10);
+    expect(snapped.getUTCMinutes()).toBe(0);
+    expect(snapped.getUTCSeconds()).toBe(0);
+    expect(snapped.getUTCMilliseconds()).toBe(0);
+  });
+
+  it('returns the same time if already on a :00 boundary', () => {
+    const d = new Date('2026-05-08T10:00:00.000Z');
+    const snapped = snapToNext30Min(d);
+    expect(snapped.getTime()).toBe(d.getTime());
+  });
+
+  it('returns the same time if already on a :30 boundary', () => {
+    const d = new Date('2026-05-08T10:30:00.000Z');
+    const snapped = snapToNext30Min(d);
+    expect(snapped.getTime()).toBe(d.getTime());
+  });
+
+  it('rounds forward when seconds are non-zero on a :00 minute', () => {
+    const d = new Date('2026-05-08T10:00:01.000Z');
+    const snapped = snapToNext30Min(d);
+    expect(snapped.getUTCMinutes()).toBe(30);
+    expect(snapped.getUTCSeconds()).toBe(0);
+    expect(snapped.getUTCHours()).toBe(10);
   });
 });
