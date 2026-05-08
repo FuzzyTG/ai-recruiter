@@ -38,6 +38,17 @@ description: Schedule an interview — propose time slots, confirm, resend, or c
 - Interview duration (default: 60 minutes)
 - Number of slots to offer (default: 3)
 
+#### Date Targeting
+
+**[LLM]** If the HM specifies a target date or date range (e.g., "next Tuesday", "sometime next week", "May 15th"):
+
+1. Set `num_slots` to 20 in the preview call to ensure coverage across the 2-week window.
+2. After receiving slots from MCP, filter to only show slots matching the HM's date preference.
+3. If no slots match the target date, inform the HM and suggest the nearest available dates from the returned slots.
+4. In the Step 5 send call, set `num_slots` to the number of filtered slots you are presenting — not 20.
+
+If the HM has no date preference, use the default `num_slots` (3) with no filtering.
+
 #### Step 2: Get Available Slots (Preview)
 
 **[MCP]** Call `recruit_schedule` with `approved: false` to preview available slots without sending email:
