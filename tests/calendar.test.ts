@@ -473,3 +473,204 @@ describe('generateCancelIcs', () => {
     expect(unfolded).toContain('ATTENDEE;RSVP=TRUE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN="Test \\"Final\\", Candidate":mailto:candidate@test.com');
   });
 });
+
+// ---------------------------------------------------------------------------
+// dateAtHourInTz — tested indirectly via findFreeSlots with non-UTC timezones
+// (Issue #26: dateAtHourInTz returns wrong day for UTC+ timezones)
+// ---------------------------------------------------------------------------
+
+describe('findFreeSlots timezone handling (dateAtHourInTz)', () => {
+  const workingHours: WorkingHours = {
+    startHour: 9,
+    endHour: 18,
+    days: [1, 2, 3, 4, 5], // Mon-Fri
+  };
+
+  /**
+   * Helper: given a Date, return the hour in a specific timezone (0-23).
+   */
+  function hourInTz(d: Date, tz: string): number {
+    return parseInt(d.toLocaleString('en-US', { timeZone: tz, hour: 'numeric', hour12: false }), 10);
+  }
+
+  /**
+   * Helper: given a Date, return the local date string (YYYY-MM-DD) in a timezone.
+   */
+  function dateStrInTz(d: Date, tz: string): string {
+    return d.toLocaleDateString('en-CA', { timeZone: tz });
+  }
+
+  it('Asia/Shanghai (UTC+8): free slots fall within 09:00-18:00 local', () => {
+    // Wed May 7, 2025 — using a date where hour=18 in UTC+8 triggers the bug
+    const rangeStart = new Date('2025-05-07T00:00:00Z'); // May 7 08:00 CST
+    const rangeEnd = new Date('2025-05-08T00:00:00Z');   // May 8 08:00 CST
+
+    const free = findFreeSlots([], {
+      rangeStart,
+      rangeEnd,
+      workingHours,
+      timezone: 'Asia/Shanghai',
+    });
+
+    expect(free.length).toBeGreaterThanOrEqual(1);
+
+    for (const slot of free) {
+      const startHour = hourInTz(slot.start, 'Asia/Shanghai');
+      const endHour = hourInTz(slot.end, 'Asia/Shanghai');
+      expect(startHour).toBeGreaterThanOrEqual(9);
+      expect(endHour).toBeLessThanOrEqual(18);
+      // All slots should be on May 7 local time
+      expect(dateStrInTz(slot.start, 'Asia/Shanghai')).toBe('2025-05-07');
+    }
+
+    // Working window should be exactly 9 hours (09:00-18:00)
+    const windowMs = free.reduce((sum, s) => sum + (s.end.getTime() - s.start.getTime()), 0);
+    expect(windowMs).toBe(9 * 60 * 60 * 1000);
+  });
+
+  it('Asia/Tokyo (UTC+9): free slots fall within 09:00-18:00 local', () => {
+    // Wed May 7, 2025
+    const rangeStart = new Date('2025-05-06T15:00:00Z'); // May 7 00:00 JST
+    const rangeEnd = new Date('2025-05-07T15:00:00Z');   // May 8 00:00 JST
+
+    const free = findFreeSlots([], {
+      rangeStart,
+      rangeEnd,
+      workingHours,
+      timezone: 'Asia/Tokyo',
+    });
+
+    expect(free.length).toBeGreaterThanOrEqual(1);
+
+    for (const slot of free) {
+      const startHour = hourInTz(slot.start, 'Asia/Tokyo');
+      const endHour = hourInTz(slot.end, 'Asia/Tokyo');
+      expect(startHour).toBeGreaterThanOrEqual(9);
+      expect(endHour).toBeLessThanOrEqual(18);
+      expect(dateStrInTz(slot.start, 'Asia/Tokyo')).toBe('2025-05-07');
+    }
+
+    const windowMs = free.reduce((sum, s) => sum + (s.end.getTime() - s.start.getTime()), 0);
+    expect(windowMs).toBe(9 * 60 * 60 * 1000);
+  });
+
+  it('America/New_York (UTC-5/-4): free slots fall within 09:00-18:00 local', () => {
+    // Wed May 7, 2025 — EDT (UTC-4) is in effect in May
+    const rangeStart = new Date('2025-05-07T04:00:00Z'); // May 7 00:00 EDT
+    const rangeEnd = new Date('2025-05-08T04:00:00Z');   // May 8 00:00 EDT
+
+    const free = findFreeSlots([], {
+      rangeStart,
+      rangeEnd,
+      workingHours,
+      timezone: 'America/New_York',
+    });
+
+    expect(free.length).toBeGreaterThanOrEqual(1);
+
+    for (const slot of free) {
+      const startHour = hourInTz(slot.start, 'America/New_York');
+      const endHour = hourInTz(slot.end, 'America/New_York');
+      expect(startHour).toBeGreaterThanOrEqual(9);
+      expect(endHour).toBeLessThanOrEqual(18);
+      expect(dateStrInTz(slot.start, 'America/New_York')).toBe('2025-05-07');
+    }
+
+    const windowMs = free.reduce((sum, s) => sum + (s.end.getTime() - s.start.getTime()), 0);
+    expect(windowMs).toBe(9 * 60 * 60 * 1000);
+  });
+
+  it('America/Los_Angeles (UTC-8/-7): free slots fall within 09:00-18:00 local', () => {
+    // Wed May 7, 2025 — PDT (UTC-7) is in effect in May
+    const rangeStart = new Date('2025-05-07T07:00:00Z'); // May 7 00:00 PDT
+    const rangeEnd = new Date('2025-05-08T07:00:00Z');   // May 8 00:00 PDT
+
+    const free = findFreeSlots([], {
+      rangeStart,
+      rangeEnd,
+      workingHours,
+      timezone: 'America/Los_Angeles',
+    });
+
+    expect(free.length).toBeGreaterThanOrEqual(1);
+
+    for (const slot of free) {
+      const startHour = hourInTz(slot.start, 'America/Los_Angeles');
+      const endHour = hourInTz(slot.end, 'America/Los_Angeles');
+      expect(startHour).toBeGreaterThanOrEqual(9);
+      expect(endHour).toBeLessThanOrEqual(18);
+      expect(dateStrInTz(slot.start, 'America/Los_Angeles')).toBe('2025-05-07');
+    }
+
+    const windowMs = free.reduce((sum, s) => sum + (s.end.getTime() - s.start.getTime()), 0);
+    expect(windowMs).toBe(9 * 60 * 60 * 1000);
+  });
+
+  it('Asia/Shanghai: dayStart and dayEnd produce correct UTC hours', () => {
+    // The specific bug: endHour=18 in Asia/Shanghai (UTC+8) means UTC hour 10.
+    // Without the fix, it would return hour 10 on the NEXT day.
+    const rangeStart = new Date('2025-05-07T00:00:00Z');
+    const rangeEnd = new Date('2025-05-08T00:00:00Z');
+
+    const free = findFreeSlots([], {
+      rangeStart,
+      rangeEnd,
+      workingHours,
+      timezone: 'Asia/Shanghai',
+    });
+
+    // 09:00 CST = 01:00 UTC, 18:00 CST = 10:00 UTC
+    expect(free).toHaveLength(1);
+    expect(free[0].start.getUTCHours()).toBe(1);
+    expect(free[0].end.getUTCHours()).toBe(10);
+    // Both should be on May 7 UTC (since 01:00-10:00 UTC is still May 7)
+    expect(free[0].start.getUTCDate()).toBe(7);
+    expect(free[0].end.getUTCDate()).toBe(7);
+  });
+
+  it('multi-day range with Asia/Shanghai produces correct slots each day', () => {
+    // Wed May 7 through Fri May 9, 2025
+    const rangeStart = new Date('2025-05-06T16:00:00Z'); // May 7 00:00 CST
+    const rangeEnd = new Date('2025-05-09T16:00:00Z');   // May 10 00:00 CST (Sat)
+
+    const free = findFreeSlots([], {
+      rangeStart,
+      rangeEnd,
+      workingHours,
+      timezone: 'Asia/Shanghai',
+    });
+
+    // Should have 3 working days: May 7 (Wed), May 8 (Thu), May 9 (Fri)
+    expect(free).toHaveLength(3);
+
+    const localDates = free.map(s => dateStrInTz(s.start, 'Asia/Shanghai'));
+    expect(localDates).toEqual(['2025-05-07', '2025-05-08', '2025-05-09']);
+
+    // Each slot should be exactly 9 hours
+    for (const slot of free) {
+      const durationMs = slot.end.getTime() - slot.start.getTime();
+      expect(durationMs).toBe(9 * 60 * 60 * 1000);
+    }
+  });
+
+  it('month boundary: Asia/Shanghai on March 31 produces correct slots', () => {
+    // March 31, 2025 is a Monday
+    const rangeStart = new Date('2025-03-30T16:00:00Z'); // March 31 00:00 CST
+    const rangeEnd = new Date('2025-03-31T16:00:00Z');   // April 1 00:00 CST
+
+    const free = findFreeSlots([], {
+      rangeStart,
+      rangeEnd,
+      workingHours,
+      timezone: 'Asia/Shanghai',
+    });
+
+    expect(free).toHaveLength(1);
+    const localDate = dateStrInTz(free[0].start, 'Asia/Shanghai');
+    expect(localDate).toBe('2025-03-31');
+    expect(free[0].start.getUTCHours()).toBe(1); // 09:00 CST
+    expect(free[0].end.getUTCHours()).toBe(10);  // 18:00 CST
+    const durationMs = free[0].end.getTime() - free[0].start.getTime();
+    expect(durationMs).toBe(9 * 60 * 60 * 1000);
+  });
+});

@@ -232,6 +232,12 @@ function dateAtHourInTz(base: Date, hour: number, tz: string): Date {
   const diff = localHour - hour;
   guess.setUTCHours(guess.getUTCHours() - diff);
 
+  const intendedDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const resultDate = guess.toLocaleDateString('en-CA', { timeZone: tz });
+  if (resultDate !== intendedDate) {
+    guess.setUTCHours(guess.getUTCHours() + (resultDate > intendedDate ? -24 : 24));
+  }
+
   return guess;
 }
 

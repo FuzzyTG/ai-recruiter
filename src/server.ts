@@ -1774,7 +1774,7 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
   const emailClient = deps?.emailClient;
 
   const handlers = createHandlers({ store, emailClient, apiKey });
-  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.22' });
+  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.23' });
 
   registerRecruitingTools(server, handlers);
 
