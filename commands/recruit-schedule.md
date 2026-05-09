@@ -20,7 +20,7 @@ description: Schedule an interview — propose time slots, confirm, resend, or c
 
 - If `setup_required` → "Run `/recruit-setup` first."
 - If `candidate_not_found` → "Candidate not found. Check ID or run `/recruit-status` to see available candidates."
-- If candidate state is `screened_pass` → proceed with `propose`.
+- If candidate state is `screening` or `screened_pass` → proceed with `propose`.
 - If candidate state is `scheduling` → proceed with `confirm` or `resend`.
 - If candidate state is `scheduling` and HM wants to cancel → proceed with `cancel`.
 - If candidate state is `interview_confirmed` and HM wants to cancel or reschedule → proceed with `cancel`.
@@ -159,7 +159,7 @@ Follow the same flow as `propose` but with `action: "resend"`. Candidate must be
 | Writing "Monday April 15" without verification | Server scans email for date-weekday mismatches, rejects on error | Derive weekday from ISO string after MCP returns slots |
 | Guessing available dates | Only the calendar feed knows real availability | Let MCP find free slots from iCal feed |
 | Sending email without HM seeing it | Unapproved candidate contact | Always show full email draft, get explicit "yes" |
-| Proposing for candidate not in screened_pass | Invalid state transition | Check candidate state via recruit_status first |
+| Proposing for candidate not in screening or screened_pass | Invalid state transition | Check candidate state via recruit_status first |
 | Writing files directly (ICS, conversation logs) | Bypasses audit trail | MCP tool handles ICS generation, message logging |
 | Skipping CC to HM | Loses human oversight trail | CC is automatic via MCP tool — don't override |
 

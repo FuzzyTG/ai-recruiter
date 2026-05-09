@@ -70,6 +70,8 @@ export const APPROVAL_REQUIRED_TRANSITIONS: ReadonlyArray<{
   { to: CandidateState.HomeworkAssigned },
   { from: CandidateState.Evaluating, to: CandidateState.Scheduling },
   { from: CandidateState.Scheduling, to: CandidateState.ScreenedPass },
+  { from: CandidateState.Screening, to: CandidateState.ScreenedPass },
+  { from: CandidateState.Screening, to: CandidateState.ScreenedReject },
   { from: CandidateState.InterviewConfirmed, to: CandidateState.Scheduling },
   { from: CandidateState.InterviewConfirmed, to: CandidateState.NoShow },
 ];
@@ -351,6 +353,8 @@ export function isApprovalRequired(from: CandidateState, to: CandidateState): bo
   if (to === CandidateState.Rejected) return true;
   if (to === CandidateState.HomeworkAssigned) return true;
   if (from === CandidateState.Scheduling && to === CandidateState.ScreenedPass) return true;
+  if (from === CandidateState.Screening && to === CandidateState.ScreenedPass) return true;
+  if (from === CandidateState.Screening && to === CandidateState.ScreenedReject) return true;
   if (from === CandidateState.InterviewConfirmed && to === CandidateState.NoShow) return true;
   return false;
 }

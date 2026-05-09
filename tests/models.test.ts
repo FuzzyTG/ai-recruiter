@@ -124,9 +124,16 @@ describe('isApprovalRequired', () => {
     expect(isApprovalRequired(CandidateState.Evaluating, CandidateState.Scheduling)).toBe(true);
   });
 
+  it('screening -> screened_pass requires approval', () => {
+    expect(isApprovalRequired(CandidateState.Screening, CandidateState.ScreenedPass)).toBe(true);
+  });
+
+  it('screening -> screened_reject requires approval', () => {
+    expect(isApprovalRequired(CandidateState.Screening, CandidateState.ScreenedReject)).toBe(true);
+  });
+
   it('transitions that do NOT require approval', () => {
     expect(isApprovalRequired(CandidateState.New, CandidateState.Screening)).toBe(false);
-    expect(isApprovalRequired(CandidateState.Screening, CandidateState.ScreenedPass)).toBe(false);
     expect(isApprovalRequired(CandidateState.Calibration, CandidateState.DecisionPending)).toBe(false);
     expect(isApprovalRequired(CandidateState.InterviewDone, CandidateState.Evaluating)).toBe(false);
   });

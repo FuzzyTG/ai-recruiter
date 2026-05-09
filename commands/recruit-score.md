@@ -98,7 +98,7 @@ Repeat until HM approves.
 }
 ```
 
-### Step 6: Display Result
+### Step 6: Display Result and Screen Decision
 
 **[LLM]** Show result from MCP:
 
@@ -108,13 +108,18 @@ Candidate Scored
 ID:      C-20260415-001
 Name:    Alice Chen
 Email:   alice@example.com
-Score:   0.82 (pass threshold: 0.60)
-State:   screened_pass ✓
-
-Next: Schedule interview with /recruit-schedule
+Score:   0.82
+State:   screening
 ```
 
-If `screened_reject`: explain the score is below threshold. HM can still proceed via `/recruit-schedule` if they override.
+**[LLM]** Ask HM:
+
+> "Pass [candidate name] to interview scheduling, or reject?"
+
+- **Pass** → tell HM: "Next: schedule interview with `/recruit-schedule`"
+- **Reject** → tell HM: "Next: send rejection with `/recruit-decide`"
+
+Do not auto-decide based on the score. The HM reviews the score and dimensions, then makes the call.
 
 ## Batch Scoring
 

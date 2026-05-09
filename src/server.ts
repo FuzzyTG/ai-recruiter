@@ -541,21 +541,6 @@ export function createHandlers(deps: ServerDeps) {
       // Transition new -> screening (no approval needed)
       store.transitionState(role, candidateId, CandidateState.Screening);
 
-      // Transition based on score
-      if (weightedAvg >= 0.6) {
-        store.transitionState(
-          role,
-          candidateId,
-          CandidateState.ScreenedPass,
-        );
-      } else {
-        store.transitionState(
-          role,
-          candidateId,
-          CandidateState.ScreenedReject,
-        );
-      }
-
       // Read final state
       const updatedCandidate = store.readCandidate(role, candidateId);
 
@@ -601,10 +586,10 @@ export function createHandlers(deps: ServerDeps) {
 
       if (args.action === 'propose' || args.action === 'resend') {
         // Validate state
-        if (args.action === 'propose' && candidate.state !== CandidateState.ScreenedPass) {
+        if (args.action === 'propose' && candidate.state !== CandidateState.ScreenedPass && candidate.state !== CandidateState.Screening) {
           return failure(
             'validation_error',
-            `Cannot propose schedule: candidate is in state ${candidate.state}, expected screened_pass`,
+            `Cannot propose schedule: candidate is in state ${candidate.state}, expected screening or screened_pass`,
           );
         }
         if (args.action === 'resend' && candidate.state !== CandidateState.Scheduling) {
@@ -638,6 +623,14 @@ export function createHandlers(deps: ServerDeps) {
               `Preflight failed: ${failedChecks.map((c) => c.message).join('; ')}`,
             );
           }
+        }
+
+        // Transition screening → screened_pass when proposing (explicit HM decision)
+        if (candidate.state === CandidateState.Screening && args.approved) {
+          store.transitionState(role, args.candidate_id, CandidateState.ScreenedPass, {
+            approved: args.approved,
+            actor: 'hm',
+          });
         }
 
         // Parse calendar
@@ -1787,7 +1780,7 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
   const emailClient = deps?.emailClient;
 
   const handlers = createHandlers({ store, emailClient, apiKey });
-  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.25' });
+  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.26' });
 
   registerRecruitingTools(server, handlers);
 

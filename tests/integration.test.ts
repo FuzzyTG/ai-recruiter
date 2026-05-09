@@ -120,7 +120,7 @@ describe('Integration: full hiring pipeline', () => {
 
     const score = parseResult(scoreResult);
     expect(score.success).toBe(true);
-    expect(score.data.state).toBe(CandidateState.ScreenedPass);
+    expect(score.data.state).toBe(CandidateState.Screening);
     expect(score.data.overall_score).toBeGreaterThanOrEqual(0.6);
     const candidateId = score.data.candidate_id;
 
@@ -155,7 +155,7 @@ describe('Integration: full hiring pipeline', () => {
 
     // Verify state did NOT change (no side effects)
     const afterPreview = store.readCandidate(ROLE, candidateId);
-    expect(afterPreview.state).toBe(CandidateState.ScreenedPass);
+    expect(afterPreview.state).toBe(CandidateState.Screening);
 
     // Verify no email was sent
     expect(emailClient.sendEmail).not.toHaveBeenCalled();
@@ -280,7 +280,7 @@ describe('Integration: full hiring pipeline', () => {
     expect(emailClient.replyToMessage).not.toHaveBeenCalled();
   });
 
-  it('setup → score (reject) — low score gets screened_reject', async () => {
+  it('setup → score — low score stops at screening for HM decision', async () => {
     // Setup
     await handlers.recruitSetup({
       hm_name: 'Quan',
@@ -311,7 +311,7 @@ describe('Integration: full hiring pipeline', () => {
 
     const score = parseResult(scoreResult);
     expect(score.success).toBe(true);
-    expect(score.data.state).toBe(CandidateState.ScreenedReject);
+    expect(score.data.state).toBe(CandidateState.Screening);
     expect(score.data.overall_score).toBeLessThan(0.6);
   });
 
@@ -520,7 +520,7 @@ describe('Integration: full hiring pipeline', () => {
     });
     const candidateId = parseResult(scoreResult).data.candidate_id;
 
-    // Reject directly from screened_pass (universal reject transition)
+    // Reject directly from screening (universal reject transition)
     const decideResult = await handlers.recruitDecide({
       role: ROLE,
       candidate_id: candidateId,
@@ -584,8 +584,7 @@ describe('Integration: full hiring pipeline', () => {
     const status = parseResult(statusResult);
     expect(status.success).toBe(true);
     const overview = status.data.overview[ROLE];
-    expect(overview[CandidateState.ScreenedPass]).toHaveLength(1);
-    expect(overview[CandidateState.ScreenedReject]).toHaveLength(1);
+    expect(overview[CandidateState.Screening]).toHaveLength(2);
   });
 
   it('schedule preview works without email_body', async () => {

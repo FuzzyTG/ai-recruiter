@@ -773,7 +773,7 @@ describe('recruit_score', () => {
     expect(messages).toBeDefined();
   });
 
-  it('transitions to screened_pass for score >= 0.6', async () => {
+  it('stops at screening state regardless of score', async () => {
     const result = await handlers.recruitScore({
       role: 'test-role',
       candidate_name: 'Jane Doe',
@@ -787,11 +787,11 @@ describe('recruit_score', () => {
     });
 
     const parsed = parseResult(result);
-    // (4*0.6 + 4*0.4)/5 = 4/5 = 0.8 >= 0.6
-    expect(parsed.data.state).toBe(CandidateState.ScreenedPass);
+    // (4*0.6 + 4*0.4)/5 = 4/5 = 0.8 — no auto-transition, stays at screening
+    expect(parsed.data.state).toBe(CandidateState.Screening);
   });
 
-  it('transitions to screened_reject for score < 0.6', async () => {
+  it('stops at screening state for low scores too', async () => {
     const result = await handlers.recruitScore({
       role: 'test-role',
       candidate_name: 'Jane Doe',
@@ -805,8 +805,8 @@ describe('recruit_score', () => {
     });
 
     const parsed = parseResult(result);
-    // (1*0.6 + 1*0.4)/5 = 1/5 = 0.2 < 0.6
-    expect(parsed.data.state).toBe(CandidateState.ScreenedReject);
+    // (1*0.6 + 1*0.4)/5 = 1/5 = 0.2 — no auto-transition, stays at screening
+    expect(parsed.data.state).toBe(CandidateState.Screening);
   });
 
   it('rejects if framework not confirmed', async () => {
@@ -895,7 +895,7 @@ describe('recruit_score', () => {
     const parsed = parseResult(result);
     expect(parsed.success).toBe(true);
     expect(parsed.data.overall_score).toBe(0.8);
-    expect(parsed.data.state).toBe(CandidateState.ScreenedPass);
+    expect(parsed.data.state).toBe(CandidateState.Screening);
 
     const candidate = store.readCandidate('test-role', parsed.data.candidate_id);
     expect(candidate.professional_urls).toEqual([
@@ -905,8 +905,8 @@ describe('recruit_score', () => {
       { url: 'https://www.linkedin.com/in/jane-links', category: 'linkedin', source: 'portfolio_urls' },
     ]);
     expect(candidate.scores?.overall).toBe(0.8);
-    expect(candidate.state).toBe(CandidateState.ScreenedPass);
-    expect(candidate.pending_action).toBe('Schedule interview');
+    expect(candidate.state).toBe(CandidateState.Screening);
+    expect(candidate.pending_action).toBe('Complete screening');
   });
 
   it('uses the latest framework version for new candidates while old scores retain their version', async () => {
@@ -990,7 +990,7 @@ describe('recruit_schedule (propose)', () => {
   beforeEach(async () => {
     await setupRole(store);
 
-    // Create a candidate in screened_pass state via recruit_score
+    // Create a candidate via recruit_score (now stays at screening)
     const scoreResult = await handlers.recruitScore({
       role: 'test-role',
       candidate_name: 'Schedulable Candidate',
@@ -1004,6 +1004,9 @@ describe('recruit_schedule (propose)', () => {
     });
 
     candidateId = parseResult(scoreResult).data.candidate_id;
+
+    // Manually transition to screened_pass (simulates HM pass decision)
+    store.transitionState('test-role', candidateId, CandidateState.ScreenedPass, { approved: true });
   });
 
   it('returns available slots', async () => {
@@ -1184,6 +1187,35 @@ describe('recruit_schedule (propose)', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toBe('validation_error');
   });
+
+  it('accepts screening state and transitions to scheduling via screened_pass', async () => {
+    const scoreResult = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_name: 'Screen Test',
+      email: 'screen@test.com',
+      resume_markdown: '# Resume',
+      scores: {
+        technical: { score: 5, evidence: 'Excellent' },
+        communication: { score: 5, evidence: 'Excellent' },
+      },
+      approved: true,
+    });
+    const cid = parseResult(scoreResult).data.candidate_id;
+
+    const result = await handlers.recruitSchedule({
+      role: 'test-role',
+      candidate_id: cid,
+      action: 'propose',
+      email_body: 'Pick a slot.',
+      approved: true,
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+
+    const candidate = store.readCandidate('test-role', cid);
+    expect(candidate.state).toBe(CandidateState.Scheduling);
+  });
 });
 
 // =========================================================================
@@ -1209,6 +1241,9 @@ describe('recruit_schedule (confirm)', () => {
       approved: true,
     });
     candidateId = parseResult(scoreResult).data.candidate_id;
+
+    // Manually transition to screened_pass (simulates HM pass decision)
+    store.transitionState('test-role', candidateId, CandidateState.ScreenedPass, { approved: true });
 
     // Move to scheduling
     await handlers.recruitSchedule({

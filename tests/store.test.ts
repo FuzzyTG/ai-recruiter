@@ -418,6 +418,7 @@ describe('transitionState — happy path', () => {
       'test-role',
       'C-20260414-001',
       CandidateState.ScreenedPass,
+      { approved: true },
     );
     expect(updated.state).toBe(CandidateState.ScreenedPass);
 
@@ -555,6 +556,7 @@ describe('transitionState — timeline', () => {
       'test-role',
       'C-20260414-001',
       CandidateState.ScreenedPass,
+      { approved: true },
     );
     cand = store.readCandidate('test-role', 'C-20260414-001');
     expect(cand.timeline).toHaveLength(2);
