@@ -280,7 +280,7 @@ describe('Integration: full hiring pipeline', () => {
     expect(emailClient.replyToMessage).not.toHaveBeenCalled();
   });
 
-  it('setup → score — low score stops at screening for HM decision', async () => {
+  it('setup → score → screening reject via screening_decision', async () => {
     // Setup
     await handlers.recruitSetup({
       hm_name: 'Quan',
@@ -313,6 +313,17 @@ describe('Integration: full hiring pipeline', () => {
     expect(score.success).toBe(true);
     expect(score.data.state).toBe(CandidateState.Screening);
     expect(score.data.overall_score).toBeLessThan(0.6);
+
+    // Reject via screening_decision
+    const rejectResult = await handlers.recruitScore({
+      role: ROLE,
+      candidate_id: score.data.candidate_id,
+      screening_decision: 'reject',
+      approved: true,
+    });
+    const reject = parseResult(rejectResult);
+    expect(reject.success).toBe(true);
+    expect(reject.data.state).toBe(CandidateState.ScreenedReject);
   });
 
   it('config update — patching calendar_url on existing config', async () => {

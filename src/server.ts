@@ -447,12 +447,14 @@ export function createHandlers(deps: ServerDeps) {
 
   async function recruitScore(args: {
     role: string;
-    candidate_name: string;
-    email: string;
-    resume_markdown: string;
-    scores: Record<string, { score: number; evidence: string }>;
+    candidate_name?: string;
+    email?: string;
+    resume_markdown?: string;
+    scores?: Record<string, { score: number; evidence: string }>;
     portfolio_urls?: string[];
     approved: boolean;
+    screening_decision?: 'reject';
+    candidate_id?: string;
   }): Promise<ToolResult> {
     try {
       const resolution = store.resolveRole(args.role);
@@ -460,6 +462,38 @@ export function createHandlers(deps: ServerDeps) {
       if (errResp) return errResp;
       const role = (resolution as Extract<RoleResolution, { canonical: string }>).canonical;
       const roleDisplay = (resolution as Extract<RoleResolution, { display: string }>).display;
+
+      // ── Screening decision path ──────────────────────────────────
+      if (args.screening_decision === 'reject') {
+        if (!args.candidate_id) {
+          return failure('validation_error', 'candidate_id is required for screening_decision');
+        }
+        const candidate = store.readCandidate(role, args.candidate_id);
+        if (candidate.state !== CandidateState.Screening) {
+          return failure(
+            'validation_error',
+            `Cannot reject: candidate is in state ${candidate.state}, expected screening`,
+          );
+        }
+        store.transitionState(role, args.candidate_id, CandidateState.ScreenedReject, {
+          approved: args.approved,
+          actor: 'hm',
+        });
+        const updated = store.readCandidate(role, args.candidate_id);
+        return success({
+          candidate_id: args.candidate_id,
+          name: updated.name,
+          state: updated.state,
+          role_resolved: role,
+          role_display: roleDisplay,
+          screening_decision: 'reject',
+        });
+      }
+
+      // ── Normal scoring path ──────────────────────────────────────
+      if (!args.candidate_name || !args.email || !args.resume_markdown || !args.scores) {
+        return failure('validation_error', 'candidate_name, email, resume_markdown, and scores are required for scoring');
+      }
 
       // Read framework, must be confirmed
       const framework = store.readFramework(role);
@@ -1780,7 +1814,7 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
   const emailClient = deps?.emailClient;
 
   const handlers = createHandlers({ store, emailClient, apiKey });
-  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.26' });
+  const server = new McpServer({ name: 'ai-recruiter', version: '0.1.27' });
 
   registerRecruitingTools(server, handlers);
 

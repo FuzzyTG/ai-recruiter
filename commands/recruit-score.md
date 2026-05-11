@@ -117,7 +117,14 @@ State:   screening
 > "Pass [candidate name] to interview scheduling, or reject?"
 
 - **Pass** → tell HM: "Next: schedule interview with `/recruit-schedule`"
-- **Reject** → tell HM: "Next: send rejection with `/recruit-decide`"
+- **Reject** → call `recruit_score` with `{ role, candidate_id, screening_decision: "reject", approved: true }`. Display:
+  ```
+  Candidate Rejected
+  ━━━━━━━━━━━━━━━━━━
+  ID:      C-20260415-001
+  Name:    Alice Chen
+  State:   screened_reject
+  ```
 
 Do not auto-decide based on the score. The HM reviews the score and dimensions, then makes the call.
 

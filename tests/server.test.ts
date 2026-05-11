@@ -978,6 +978,93 @@ describe('recruit_score', () => {
     expect(store.readCandidate('test-role', parsed.data.candidate_id).scores?.framework_version).toBe(1);
     expect(store.readFramework('test-role').framework_version).toBe(1);
   });
+
+  it('rejects candidate from screening state via screening_decision', async () => {
+    const scoreResult = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_name: 'Jane Doe',
+      email: 'jane@example.com',
+      resume_markdown: '# Resume',
+      scores: {
+        technical: { score: 3, evidence: 'OK' },
+        communication: { score: 2, evidence: 'Weak' },
+      },
+      approved: true,
+    });
+    const cid = parseResult(scoreResult).data.candidate_id;
+
+    const rejectResult = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_id: cid,
+      screening_decision: 'reject',
+      approved: true,
+    });
+    const parsed = parseResult(rejectResult);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.state).toBe(CandidateState.ScreenedReject);
+    expect(parsed.data.screening_decision).toBe('reject');
+  });
+
+  it('rejects screening_decision without candidate_id', async () => {
+    const result = await handlers.recruitScore({
+      role: 'test-role',
+      screening_decision: 'reject',
+      approved: true,
+    });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.message).toContain('candidate_id is required');
+  });
+
+  it('rejects screening_decision for non-screening state', async () => {
+    const scoreResult = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_name: 'Jane Doe',
+      email: 'jane@example.com',
+      resume_markdown: '# Resume',
+      scores: {
+        technical: { score: 4, evidence: 'Good' },
+        communication: { score: 4, evidence: 'Good' },
+      },
+      approved: true,
+    });
+    const cid = parseResult(scoreResult).data.candidate_id;
+    store.transitionState('test-role', cid, CandidateState.ScreenedPass, { approved: true });
+
+    const result = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_id: cid,
+      screening_decision: 'reject',
+      approved: true,
+    });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.message).toContain('expected screening');
+  });
+
+  it('rejects unapproved screening_decision', async () => {
+    const scoreResult = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_name: 'Jane Doe',
+      email: 'jane@example.com',
+      resume_markdown: '# Resume',
+      scores: {
+        technical: { score: 3, evidence: 'OK' },
+        communication: { score: 2, evidence: 'Weak' },
+      },
+      approved: true,
+    });
+    const cid = parseResult(scoreResult).data.candidate_id;
+
+    const result = await handlers.recruitScore({
+      role: 'test-role',
+      candidate_id: cid,
+      screening_decision: 'reject',
+      approved: false,
+    });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+  });
 });
 
 // =========================================================================
